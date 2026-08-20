@@ -1,0 +1,16 @@
+{
+  "name": "ufc-fantasy-prop-alerts",
+  "version": "1.0.0",
+  "description": "Alerts the moment UFC fantasy-point props drop on Underdog, PrizePicks, DraftKings Pick6, and Betr.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "once": "node src/index.js --once",
+    "status": "node src/index.js --status",
+    "test-notify": "node src/index.js --test-notify",
+    "reset": "node src/index.js --reset"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {}
+}

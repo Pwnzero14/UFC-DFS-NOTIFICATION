@@ -1,0 +1,14 @@
+# Contains your Discord webhook URL - never commit this.
+# config.example.json is the template that IS committed.
+config.json
+
+# Runtime state, recreated on first run
+state.json
+state.json.tmp
+watcher.lock
+watcher.log
+lidtest.marker
+
+node_modules/
+npm-debug.log*
+*.tmp

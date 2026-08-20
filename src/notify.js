@@ -1,0 +1,170 @@
+// Delivery: console, Discord webhook, Windows toast.
+
+import { execFile } from 'node:child_process';
+import { writeFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { request } from './http.js';
+
+const fmt = (v) => (v == null ? '—' : String(v));
+
+function fightTime(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? null
+    : `<t:${Math.floor(d.getTime() / 1000)}:F>`;
+}
+
+/** Group props by event so one embed covers one fight card. */
+function groupByEvent(props) {
+  const map = new Map();
+  for (const p of props) {
+    const k = p.event || 'Upcoming';
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(p);
+  }
+  return map;
+}
+
+/** "+2.51" / "-1.00" with a direction arrow. */
+export function moveDelta(from, to) {
+  const d = Number(to) - Number(from);
+  const arrow = d > 0 ? '🔺' : '🔻';
+  const sign = d > 0 ? '+' : '';
+  return `${arrow} ${sign}${d.toFixed(2)}`;
+}
+
+export function buildDiscordPayload(alert, cfg) {
+  const { bookMeta, kind, props } = alert;
+  const isFantasy = kind === 'fantasy';
+  const isMove = kind === 'move';
+
+  const title = isFantasy
+    ? `🚨 ${bookMeta.name} — UFC FANTASY PROPS ARE UP`
+    : isMove
+      ? `📈 ${bookMeta.name} — fantasy line ${props.length === 1 ? 'move' : 'moves'}`
+      : `👀 ${bookMeta.name} — new UFC market: ${props[0]?.statLabel}`;
+
+  const embeds = [];
+  for (const [event, list] of groupByEvent(props)) {
+    const lines = list.slice(0, 24).map((p) => {
+      const who = p.fighter ? `**${p.fighter}**` : '*(market opened)*';
+      if (p.previousValue != null && p.value != null) {
+        return `${who} — ${p.statLabel} \`${fmt(p.previousValue)}\` → \`${fmt(p.value)}\` ${moveDelta(p.previousValue, p.value)}`;
+      }
+      return `${who} — ${p.statLabel} \`${fmt(p.value)}\``;
+    });
+
+    const when = fightTime(list[0]?.startsAt);
+    embeds.push({
+      title: event,
+      description: lines.join('\n') || '_no readable lines yet_',
+      color: bookMeta.color,
+      url: bookMeta.boardUrl,
+      fields: when ? [{ name: 'Starts', value: when, inline: true }] : [],
+      footer: { text: `${bookMeta.name} • ${list.length} prop(s)` },
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // The drop is the thing worth waking you up for. Line moves are frequent once
+  // a board is live, so they post without a mention unless you ask for one -
+  // an @everyone on every half-point wiggle just gets the channel muted.
+  const mention = cfg.discord?.mention || '';
+  const shouldPing =
+    isFantasy || (isMove && cfg.discord?.mentionOnLineMove === true);
+
+  return {
+    username: cfg.discord?.username || 'UFC Fantasy Alerts',
+    content: shouldPing && mention ? `${mention} ${title}`.trim() : title,
+    embeds: embeds.slice(0, 10), // Discord caps embeds per message
+    allowed_mentions: { parse: ['everyone', 'roles', 'users'] },
+  };
+}
+
+export async function sendDiscord(webhookUrl, payload) {
+  if (!webhookUrl) return { skipped: 'no webhook configured' };
+  const res = await request(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    retries: 3,
+  });
+  return { status: res.status };
+}
+
+/** Native Windows 10/11 toast. Best-effort: never throws into the poll loop. */
+export async function sendWindowsToast(title, message) {
+  if (process.platform !== 'win32') return { skipped: 'not windows' };
+  const esc = (s) =>
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .slice(0, 250);
+
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType=WindowsRuntime] | Out-Null
+$xml = @"
+<toast activationType="protocol" launch="${esc('https://underdogfantasy.com')}">
+  <visual><binding template="ToastGeneric">
+    <text>${esc(title)}</text>
+    <text>${esc(message)}</text>
+  </binding></visual>
+  <audio src="ms-winsoundevent:Notification.Looping.Alarm2"/>
+</toast>
+"@
+$doc = New-Object Windows.Data.Xml.Dom.XmlDocument
+$doc.LoadXml($xml)
+$toast = New-Object Windows.UI.Notifications.ToastNotification $doc
+# Windows only renders toasts for a registered AppUserModelID. PowerShell's own
+# shortcut ID is always present on Win10/11, so borrow it rather than shipping
+# an installer just to register our own.
+$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}' + [char]92 + 'WindowsPowerShell' + [char]92 + 'v1.0' + [char]92 + 'powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
+`;
+
+  const file = join(tmpdir(), `ufc-toast-${randomUUID()}.ps1`);
+  try {
+    await writeFile(file, script, 'utf8');
+    await new Promise((resolve, reject) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file],
+        { timeout: 15000 },
+        (err, _out, stderr) => (err ? reject(new Error(stderr || err.message)) : resolve())
+      );
+    });
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message.split('\n')[0] };
+  } finally {
+    unlink(file).catch(() => {});
+  }
+}
+
+const TAGS = {
+  fantasy: '\x1b[42m\x1b[30m FANTASY \x1b[0m',
+  move: '\x1b[46m\x1b[30m  MOVE   \x1b[0m',
+  unknown: '\x1b[43m\x1b[30m NEW STAT \x1b[0m',
+};
+
+export function logAlert(alert) {
+  const tag = TAGS[alert.kind] || TAGS.unknown;
+  console.log(`\n${tag} ${alert.bookMeta.name} — ${alert.props.length} prop(s)`);
+  for (const p of alert.props.slice(0, 15)) {
+    const moved = p.previousValue != null && p.value != null;
+    const detail = moved
+      ? `${fmt(p.previousValue)} -> ${fmt(p.value)}  (${Number(p.value) > Number(p.previousValue) ? '+' : ''}${(Number(p.value) - Number(p.previousValue)).toFixed(2)})`
+      : fmt(p.value);
+    console.log(
+      `   ${(p.fighter || '(market)').padEnd(24)} ${p.statLabel.padEnd(22)} ${detail}`
+    );
+  }
+  if (alert.props.length > 15) console.log(`   …and ${alert.props.length - 15} more`);
+  process.stdout.write('\x07'); // terminal bell
+}

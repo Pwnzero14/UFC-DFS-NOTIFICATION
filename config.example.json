@@ -1,0 +1,20 @@
+{
+  "discord": {
+    "webhookUrl": "",
+    "username": "UFC Fantasy Alerts",
+    "mention": "@everyone"
+  },
+  "windowsToast": true,
+  "pollSeconds": 60,
+  "alertOnFantasy": true,
+  "alertOnUnknownStat": true,
+  "alertOnLineMove": false,
+  "alertOnFirstRun": false,
+  "books": {
+    "underdog": true,
+    "prizepicks": true,
+    "betr": true,
+    "pick6": true
+  },
+  "quietHours": { "enabled": false, "startHour": 2, "endHour": 8 }
+}
