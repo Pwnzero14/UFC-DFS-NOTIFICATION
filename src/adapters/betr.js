@@ -6,12 +6,15 @@ import { classify } from '../fantasy.js';
 
 const ENDPOINT = 'https://api.fantasy.betr.app/graphql';
 
-const EVENTS_QUERY = `query AllLeaguesUpcomingEvents {
-  getUpcomingEventsV2 { id league status }
-}`;
-
-const EVENT_QUERY = `query EventInfoWithPlayers($id: String!) {
-  getEventByIdV2(id: $id) {
+// One request for the whole league, players and projections included.
+//
+// This previously listed every league's events and then queried each UFC event
+// individually - 14 requests per poll. That was both wasteful (Betr started
+// answering 401, plausibly because of the volume) and fragile: a single failed
+// event query silently produced a partial board, which wiped those props from
+// state and turned later line moves into phantom "new prop" alerts.
+const LEAGUE_QUERY = `query LeagueUpcomingEvents($league: League!) {
+  getUpcomingEventsV2(league: $league) {
     id name date status sport league
     ... on TeamVersusEvent {
       teams {
@@ -32,7 +35,9 @@ export const meta = {
   name: 'Betr',
   color: 0xff6b00,
   boardUrl: 'https://picks.betr.app/',
-  minIntervalMs: 90_000,
+  // One request per poll now, but Betr started answering 401 after heavy
+  // polling, so stay deliberately light-touch here.
+  minIntervalMs: 180_000,
 };
 
 const gqlHeaders = {
@@ -53,23 +58,13 @@ async function gql(query, variables = {}) {
 }
 
 export async function fetchProps() {
-  const list = await gql(EVENTS_QUERY);
-  const ufcEvents = (list.getUpcomingEventsV2 || []).filter(
-    (e) => e.league === 'UFC' && e.status !== 'FINISHED'
+  const data = await gql(LEAGUE_QUERY, { league: 'UFC' });
+  const events = (data.getUpcomingEventsV2 || []).filter(
+    (e) => e.status !== 'FINISHED'
   );
 
   const props = [];
-  // Sequential on purpose: keeps the request rate polite.
-  for (const ev of ufcEvents) {
-    let detail;
-    try {
-      detail = await gql(EVENT_QUERY, { id: ev.id });
-    } catch {
-      continue; // one bad event shouldn't sink the whole poll
-    }
-    const event = detail.getEventByIdV2;
-    if (!event) continue;
-
+  for (const event of events) {
     for (const team of event.teams || []) {
       for (const player of team.players || []) {
         const fighter = `${player.firstName || ''} ${player.lastName || ''}`.trim();
