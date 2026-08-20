@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { loadConfig, inQuietHours, ROOT } from './config.js';
 import * as store from './state.js';
 import * as lock from './lock.js';
+import { teeConsoleTo } from './logfile.js';
 import * as notify from './notify.js';
 import { HttpError } from './http.js';
 
@@ -16,6 +17,7 @@ import * as pick6 from './adapters/pick6.js';
 const ADAPTERS = [underdog, prizepicks, betr, pick6];
 const STATE_PATH = join(ROOT, 'state.json');
 const LOCK_PATH = join(ROOT, 'watcher.lock');
+const LOG_PATH = join(ROOT, 'watcher.log');
 const MAX_BACKOFF_MS = 30 * 60_000;
 
 const args = new Set(process.argv.slice(2));
@@ -360,6 +362,9 @@ async function main() {
     console.log('Stop that one first, or use --status to inspect the boards.');
     return;
   }
+
+  // Log to file from here on: the Scheduled Task has no shell to redirect for us.
+  teeConsoleTo(LOG_PATH);
 
   console.log('UFC Fantasy Prop Alerts');
   console.log(`Watching : ${books}`);

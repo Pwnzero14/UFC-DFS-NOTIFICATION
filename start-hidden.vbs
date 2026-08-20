@@ -17,5 +17,7 @@ shell.CurrentDirectory = root
 
 ' cmd /c so the restart loop in run.bat keeps working; 0 = hidden window,
 ' False = do not block this script waiting for it.
-cmd = "cmd /c """"" & fso.BuildPath(root, "run.bat") & """ >> """ & logPath & """ 2>&1"""
+' No redirection: the watcher writes watcher.log itself (src/logfile.js), so
+' redirecting here too would give two writers on one file.
+cmd = "cmd /c """ & fso.BuildPath(root, "run.bat") & """"
 shell.Run cmd, 0, False

@@ -53,15 +53,29 @@ Write-Host ""
 $taskInstalled = $false
 try {
     $action = New-ScheduledTaskAction -Execute $node -Argument "`"$entry`"" -WorkingDirectory $root
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
+
+    # AtStartup is the one that matters: it fires at boot, before anyone signs
+    # in, so an overnight crash-reboot brings the watcher back without you.
+    # AtLogOn is kept as a second trigger so a manual stop/start still recovers.
+    $trigger = @(
+        New-ScheduledTaskTrigger -AtStartup
+        New-ScheduledTaskTrigger -AtLogOn
+    )
+
     $settings = New-ScheduledTaskSettingsSet `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
         -RestartCount 999 `
         -RestartInterval (New-TimeSpan -Minutes 1) `
         -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
-        -StartWhenAvailable
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+        -StartWhenAvailable `
+        -MultipleInstances IgnoreNew
+
+    # Running as SYSTEM is what allows a boot trigger to work with no user
+    # session present. Trade-off: SYSTEM has no desktop, so the Windows toast
+    # cannot render - Discord carries the alerts, which is the channel that
+    # reaches your phone anyway.
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
@@ -72,11 +86,21 @@ try {
         -Description 'Alerts when UFC fantasy props drop on Underdog, PrizePicks, Betr and DK Pick6.' | Out-Null
 
     $taskInstalled = $true
-    Write-Host "Installed as a Scheduled Task - starts at every logon, restarts on crash."
+    Write-Host "Installed as a Scheduled Task running as SYSTEM."
+    Write-Host "  triggers : at startup (before sign-in) AND at logon"
+    Write-Host "  recovery : restarts every minute on failure, no time limit"
+    Write-Host ""
+
+    # Two managers competing would just fight over the lock - drop the shortcut.
+    if (Test-Path $lnkPath) {
+        Remove-Item $lnkPath -Force
+        Write-Host "Removed the old Startup-folder shortcut (the task supersedes it)."
+    }
+
     Write-Host "Start it now with:  Start-ScheduledTask -TaskName '$taskName'"
 }
 catch {
-    Write-Host "Scheduled Task registration was denied (needs an elevated PowerShell)."
+    Write-Host "Scheduled Task registration failed: $($_.Exception.Message)"
     Write-Host "Falling back to a Startup-folder shortcut, which needs no admin rights."
     Write-Host ""
 }
