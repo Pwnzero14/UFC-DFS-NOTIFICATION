@@ -12,3 +12,7 @@ lidtest.marker
 node_modules/
 npm-debug.log*
 *.tmp
+
+# Scratch files from debugging book payloads
+*.html
+!README.html
