@@ -104,7 +104,15 @@ function makeClient(ws) {
  * Load `url` in headless Chrome, run `pageFunction` (an IIFE source string that
  * may await), and return its value. Always tears the browser down.
  */
-export async function evaluateOnPage(url, pageFunction, { timeoutMs = 60000 } = {}) {
+const REAL_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+export async function evaluateOnPage(
+  url,
+  pageFunction,
+  { timeoutMs = 60000, stealth = false } = {}
+) {
   const bin = findBrowser();
   if (!bin) throw new Error('no Chrome/Edge install found');
 
@@ -125,6 +133,15 @@ export async function evaluateOnPage(url, pageFunction, { timeoutMs = 60000 } = 
       '--disable-background-networking',
       '--mute-audio',
       '--window-size=1280,2000',
+      // Sites behind bot protection fingerprint headless Chrome; these make it
+      // look like an ordinary browser session.
+      ...(stealth
+        ? [
+            '--disable-blink-features=AutomationControlled',
+            `--user-agent=${REAL_UA}`,
+            '--lang=en-US,en',
+          ]
+        : []),
       'about:blank',
     ],
     { stdio: 'ignore', windowsHide: true }
@@ -162,6 +179,18 @@ export async function evaluateOnPage(url, pageFunction, { timeoutMs = 60000 } = 
     const { send, once } = makeClient(ws);
     await send('Page.enable');
     await send('Runtime.enable');
+
+    if (stealth) {
+      // navigator.webdriver is the first thing bot checks look at.
+      await send('Page.addScriptToEvaluateOnNewDocument', {
+        source: `
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+          Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+          Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+          window.chrome = window.chrome || { runtime: {} };
+        `,
+      }).catch(() => {});
+    }
 
     const loaded = once('Page.loadEventFired', 45000);
     await send('Page.navigate', { url });

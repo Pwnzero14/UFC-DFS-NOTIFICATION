@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// UFC fantasy-prop drop alerts across Underdog, PrizePicks, Betr, DK Pick6.
+// UFC prop alerts: fantasy points on Underdog, PrizePicks, Betr and DK Pick6,
+// plus tracked over/under markets on the DraftKings Sportsbook.
 
 import { join } from 'node:path';
 import { loadConfig, inQuietHours, ROOT } from './config.js';
@@ -13,8 +14,9 @@ import * as underdog from './adapters/underdog.js';
 import * as prizepicks from './adapters/prizepicks.js';
 import * as betr from './adapters/betr.js';
 import * as pick6 from './adapters/pick6.js';
+import * as dksportsbook from './adapters/dksportsbook.js';
 
-const ADAPTERS = [underdog, prizepicks, betr, pick6];
+const ADAPTERS = [underdog, prizepicks, betr, pick6, dksportsbook];
 const STATE_PATH = join(ROOT, 'state.json');
 const LOCK_PATH = join(ROOT, 'watcher.lock');
 const LOG_PATH = join(ROOT, 'watcher.log');
@@ -92,7 +94,7 @@ function buildAlerts(adapter, result, cfg, firstRun) {
   if (firstRun && !cfg.alertOnFirstRun) return alerts;
 
   if (cfg.alertOnFantasy) {
-    push('fantasy', result.newProps.filter((p) => p.kind === 'fantasy'));
+    push('fantasy', result.newProps.filter((p) => store.ALERTING_KINDS.has(p.kind)));
   }
   if (cfg.alertOnUnknownStat) {
     push('unknown', result.newProps.filter((p) => p.kind === 'unknown'));

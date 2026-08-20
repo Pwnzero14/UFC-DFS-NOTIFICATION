@@ -24,6 +24,11 @@ export async function save(path, state) {
   await rename(tmp, path);
 }
 
+// Kinds worth telling you about: fantasy points on the DFS books, and the
+// sportsbook markets we were explicitly asked to watch. Both alert on a new
+// line and on a line move; everything else is tracked but stays quiet.
+export const ALERTING_KINDS = new Set(['fantasy', 'tracked']);
+
 export function propKey(prop) {
   // `variant` separates board entries that share a fighter+stat but are
   // genuinely different offers (PrizePicks demon/goblin, alternate lines).
@@ -57,7 +62,7 @@ export function diff(state, book, props) {
     if (!prior) {
       newProps.push(prop);
     } else if (
-      prop.kind === 'fantasy' &&
+      ALERTING_KINDS.has(prop.kind) &&
       prior.value != null &&
       prop.value != null &&
       prior.value !== prop.value

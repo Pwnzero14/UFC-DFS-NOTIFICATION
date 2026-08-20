@@ -41,10 +41,21 @@ export function buildDiscordPayload(alert, cfg) {
   const isFantasy = kind === 'fantasy';
   const isMove = kind === 'move';
 
+  // Name the actual market: "FANTASY PROPS" is wrong for a sportsbook O/U.
+  const stats = [...new Set(props.map((p) => p.statLabel).filter(Boolean))];
+  const anyFantasy = stats.some((s) => /fantasy/i.test(s));
+  const marketName = anyFantasy
+    ? 'FANTASY PROPS'
+    : stats.length === 1
+      ? stats[0].toUpperCase()
+      : stats.length === 2
+        ? stats.map((s) => s.toUpperCase()).join(' & ')
+        : 'PROPS';
+
   const title = isFantasy
-    ? `🚨 ${bookMeta.name} — UFC FANTASY PROPS ARE UP`
+    ? `🚨 ${bookMeta.name} — UFC ${marketName} ARE UP`
     : isMove
-      ? `📈 ${bookMeta.name} — fantasy line ${props.length === 1 ? 'move' : 'moves'}`
+      ? `📈 ${bookMeta.name} — ${anyFantasy ? 'fantasy ' : ''}line ${props.length === 1 ? 'move' : 'moves'}`
       : `👀 ${bookMeta.name} — new UFC market: ${props[0]?.statLabel}`;
 
   const groups = groupByEvent(props);

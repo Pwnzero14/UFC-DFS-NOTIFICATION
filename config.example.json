@@ -15,7 +15,8 @@
     "underdog": true,
     "prizepicks": true,
     "betr": true,
-    "pick6": true
+    "pick6": true,
+    "dksportsbook": true
   },
   "quietHours": {
     "enabled": false,
