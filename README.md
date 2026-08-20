@@ -141,7 +141,7 @@ harmlessly to a no-op with Discord still working.
 | `alertOnUnknownStat` | `true` | Safety net — see below |
 | `alertOnLineMove` | `true` | Alert when an existing fantasy line moves up or down |
 | `lineMoveMinDelta` | `0` | Ignore moves smaller than this. `0` = report every move |
-| `discord.mentionOnLineMove` | `false` | Whether line moves ping as well as post |
+| `discord.mentionOnLineMove` | `true` | Whether line moves ping as well as post |
 | `alertOnFirstRun` | `false` | Alert on the initial baseline sweep |
 | `books.*` | `true` | Turn individual books off |
 | `quietHours` | off | Suppress desktop toasts in a time window (Discord still posts) |
@@ -157,12 +157,17 @@ Gregory Rodrigues — Fantasy Points  83.99 → 86.5   🔺 +2.51
 Anthony Hernandez — Fantasy Points  89.99 → 88.49  🔻 -1.50
 ```
 
-**Drops ping, moves don't.** A fantasy drop posts with your `@everyone` mention because
-it's the thing worth interrupting you for. Line moves post to the same channel *without*
-a mention - once a board is live those move constantly, and pinging on every half-point
-wiggle is how a channel ends up muted. Flip `discord.mentionOnLineMove` to `true` if you
-want to be pinged on those too, or raise `lineMoveMinDelta` (e.g. `1.0`) to only hear
-about moves that actually matter.
+**Both drops and moves ping by default.** A drop is obviously worth interrupting you
+for. Moves ping too because missing a bump on a line you're already on is just as
+costly - and because a quiet move is indistinguishable from no move at all, which
+caused real confusion in practice.
+
+The risk is noise: once a board is live, lines move constantly, and a channel that
+pings on every half-point wiggle gets muted. Two ways to damp it without going silent:
+set `discord.mentionOnLineMove` to `false` so moves post without a mention, or raise
+`lineMoveMinDelta` (e.g. `1.0`) so only moves that actually matter are reported at all.
+Prefer the threshold - a suppressed ping still hides the event, a threshold is an
+explicit decision about what counts.
 
 Only *fantasy* lines are watched for moves. Sig strikes drifting around is ignored.
 

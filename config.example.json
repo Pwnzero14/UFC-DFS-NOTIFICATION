@@ -2,7 +2,8 @@
   "discord": {
     "webhookUrl": "",
     "username": "UFC Fantasy Alerts",
-    "mention": "@everyone"
+    "mention": "@everyone",
+    "mentionOnLineMove": true
   },
   "windowsToast": true,
   "pollSeconds": 60,
