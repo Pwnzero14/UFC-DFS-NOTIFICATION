@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import * as store from '../src/state.js';
 import { classify } from '../src/fantasy.js';
-import { buildDiscordPayload, moveDelta } from '../src/notify.js';
+import { buildDiscordPayload, moveDelta, buildHeartbeatPayload } from '../src/notify.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -236,6 +236,71 @@ test('a genuine drop still pings', () => {
     { discord: { mention: '@everyone' } }
   );
   assert.match(payload.content, /@everyone/);
+});
+
+console.log('\nheartbeat');
+const BOOKS = [
+  { key: 'underdog', name: 'Underdog' },
+  { key: 'betr', name: 'Betr' },
+];
+const healthyState = {
+  books: {
+    underdog: {
+      healthy: true,
+      updatedAt: new Date().toISOString(),
+      props: { a: { kind: 'known' }, b: { kind: 'known' } },
+    },
+    betr: {
+      healthy: true,
+      updatedAt: new Date().toISOString(),
+      props: { c: { kind: 'known' } },
+    },
+  },
+};
+
+test('a healthy heartbeat reports all books green', () => {
+  const p = buildHeartbeatPayload(healthyState, {}, BOOKS, 3_600_000);
+  assert.match(p.content, /all books healthy/);
+  assert.match(p.embeds[0].description, /🟢 \*\*Underdog\*\* — 2 props/);
+  assert.match(p.embeds[0].description, /🟢 \*\*Betr\*\* — 1 props/);
+});
+
+test('a heartbeat can never ping', () => {
+  const p = buildHeartbeatPayload(healthyState, { discord: { mention: '@everyone' } }, BOOKS, 0);
+  assert.deepEqual(p.allowed_mentions, { parse: [] });
+  assert.doesNotMatch(p.content, /@everyone/);
+});
+
+test('an unhealthy book flips the heartbeat to a warning', () => {
+  const bad = structuredClone(healthyState);
+  bad.books.betr.healthy = false;
+  const p = buildHeartbeatPayload(bad, {}, BOOKS, 0);
+  assert.match(p.content, /unhealthy/);
+  assert.match(p.embeds[0].description, /🔴 \*\*Betr\*\*/);
+});
+
+test('a missing book is reported rather than silently skipped', () => {
+  const p = buildHeartbeatPayload({ books: {} }, {}, BOOKS, 0);
+  assert.match(p.content, /unhealthy/);
+  assert.match(p.embeds[0].description, /no data yet/);
+});
+
+test('fantasy props are called out once they exist', () => {
+  const withFantasy = structuredClone(healthyState);
+  withFantasy.books.underdog.props.z = { kind: 'fantasy' };
+  const p = buildHeartbeatPayload(withFantasy, {}, BOOKS, 0);
+  assert.match(p.embeds[0].description, /\*\*1 FANTASY\*\*/);
+});
+
+test('a manual heartbeat does not claim a bogus uptime', () => {
+  const p = buildHeartbeatPayload(healthyState, {}, BOOKS, null);
+  assert.match(p.embeds[0].footer.text, /manual check/);
+  assert.doesNotMatch(p.embeds[0].footer.text, /up 0h 0m/);
+});
+
+test('a daemon heartbeat reports real uptime', () => {
+  const p = buildHeartbeatPayload(healthyState, {}, BOOKS, 5 * 3_600_000 + 12 * 60_000);
+  assert.match(p.embeds[0].footer.text, /up 5h 12m/);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);

@@ -124,6 +124,7 @@ harmlessly to a no-op with Discord still working.
 | `node src/index.js --test-notify` | Fire a sample alert through every channel |
 | `node src/index.js --reset` | Forget everything seen; next run re-baselines |
 | `node src/index.js --simulate` | Inject fantasy props into a *real* poll and fire the genuine alert path |
+| `node src/index.js --heartbeat` | Post a status message to Discord now (read-only) |
 | `node test/detection.test.js` | Run the detection test suite (no network calls) |
 
 ---
@@ -144,6 +145,8 @@ harmlessly to a no-op with Discord still working.
 | `alertOnFirstRun` | `false` | Alert on the initial baseline sweep |
 | `books.*` | `true` | Turn individual books off |
 | `quietHours` | off | Suppress desktop toasts in a time window (Discord still posts) |
+| `heartbeat.enabled` | `true` | Post a periodic "still alive" status to Discord |
+| `heartbeat.everyHours` | `12` | How often that status posts |
 
 ### Line moves
 
@@ -162,6 +165,32 @@ want to be pinged on those too, or raise `lineMoveMinDelta` (e.g. `1.0`) to only
 about moves that actually matter.
 
 Only *fantasy* lines are watched for moves. Sig strikes drifting around is ignored.
+
+### Heartbeat
+
+Every 12 hours the watcher posts a quiet status message (no ping) listing each book,
+its prop count, whether fantasy is up yet, and how long ago it last polled.
+
+```
+💚 Watcher heartbeat — all books healthy
+🟢 Underdog — 121 props, no fantasy yet · 11 seconds ago
+🟢 PrizePicks — 25 props, no fantasy yet · 2 minutes ago
+```
+
+The point is to **make silence meaningful**. Without it, no Discord message in the
+morning is ambiguous — it could mean "lines haven't dropped yet" or "the watcher died
+at 3am." With it, a missing heartbeat is a clear signal to go and check. A book that
+starts erroring flips the message to ⚠️ and marks that book 🔴.
+
+Timing lives in `state.json`, not memory, so a crash-restart loop can't turn a failure
+into a stream of status posts. Send one on demand any time with:
+
+```bash
+node src/index.js --heartbeat
+```
+
+That's read-only — it neither writes state nor resets the 12-hour timer, so it's safe
+to run while the watcher is going.
 
 ### The `alertOnUnknownStat` safety net
 
@@ -225,7 +254,7 @@ src/
   adapters/
     underdog.js  prizepicks.js  betr.js  pick6.js
   lock.js               single-instance PID lock
-test/detection.test.js  23 tests, no network
+test/detection.test.js  30 tests, no network
 start-hidden.vbs        launches the watcher with no console window
 run.bat                 restart loop (revives node if it exits)
 stop.bat                kills the loop AND the watcher

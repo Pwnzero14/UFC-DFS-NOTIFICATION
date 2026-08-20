@@ -84,6 +84,64 @@ export function buildDiscordPayload(alert, cfg) {
   };
 }
 
+/**
+ * "Still alive" status post. The point is to make silence meaningful: if these
+ * stop arriving, the watcher is down, rather than you assuming the lines just
+ * haven't posted yet. Never pings.
+ */
+export function buildHeartbeatPayload(state, cfg, books, uptimeMs) {
+  const rows = [];
+  let anyUnhealthy = false;
+
+  for (const meta of books) {
+    const entry = state.books?.[meta.key];
+    if (!entry) {
+      rows.push(`⚪ **${meta.name}** — no data yet`);
+      anyUnhealthy = true;
+      continue;
+    }
+    const props = Object.values(entry.props || {});
+    const fantasy = props.filter((p) => p.kind === 'fantasy').length;
+    const ok = entry.healthy !== false;
+    if (!ok) anyUnhealthy = true;
+
+    const age = entry.updatedAt
+      ? `<t:${Math.floor(new Date(entry.updatedAt).getTime() / 1000)}:R>`
+      : 'unknown';
+
+    rows.push(
+      `${ok ? '🟢' : '🔴'} **${meta.name}** — ${props.length} props, ` +
+        (fantasy ? `**${fantasy} FANTASY**` : 'no fantasy yet') +
+        ` · ${age}`
+    );
+  }
+
+  // A manual `--heartbeat` runs in its own short-lived process, so its uptime
+  // is meaningless - pass null rather than reporting a bogus "up 0h 0m".
+  const uptime =
+    uptimeMs == null
+      ? 'manual check'
+      : `up ${Math.floor(uptimeMs / 3_600_000)}h ${Math.floor((uptimeMs % 3_600_000) / 60_000)}m`;
+
+  return {
+    username: cfg.discord?.username || 'UFC Fantasy Alerts',
+    content: anyUnhealthy
+      ? '⚠️ Watcher heartbeat — a book is unhealthy'
+      : '💚 Watcher heartbeat — all books healthy',
+    embeds: [
+      {
+        title: 'Still watching for UFC fantasy props',
+        description: rows.join('\n'),
+        color: anyUnhealthy ? 0xe67e22 : 0x2ecc71,
+        footer: { text: `${uptime} · alerts fire within ~60s of a drop` },
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    // A status ping is never worth an @everyone.
+    allowed_mentions: { parse: [] },
+  };
+}
+
 export async function sendDiscord(webhookUrl, payload) {
   if (!webhookUrl) return { skipped: 'no webhook configured' };
   const res = await request(webhookUrl, {

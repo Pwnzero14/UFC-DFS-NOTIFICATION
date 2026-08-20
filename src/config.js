@@ -21,6 +21,7 @@ const DEFAULTS = {
   alertOnFirstRun: false,
   books: { underdog: true, prizepicks: true, betr: true, pick6: true },
   quietHours: { enabled: false, startHour: 2, endHour: 8 },
+  heartbeat: { enabled: true, everyHours: 12 },
 };
 
 export async function loadConfig() {
@@ -36,6 +37,7 @@ export async function loadConfig() {
     discord: { ...DEFAULTS.discord, ...(raw.discord || {}) },
     books: { ...DEFAULTS.books, ...(raw.books || {}) },
     quietHours: { ...DEFAULTS.quietHours, ...(raw.quietHours || {}) },
+    heartbeat: { ...DEFAULTS.heartbeat, ...(raw.heartbeat || {}) },
     _path: path,
   };
 }

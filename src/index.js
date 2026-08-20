@@ -161,10 +161,50 @@ function activeAdapters(cfg) {
   return ADAPTERS.filter((a) => cfg.books[a.meta.key] !== false);
 }
 
+const STARTED_AT = Date.now();
+
+/**
+ * Heartbeat timing lives in state.json, not memory, so the run.bat restart loop
+ * cannot turn a crash into a stream of status posts.
+ */
+async function maybeHeartbeat(state, cfg, force = false) {
+  if (!force) {
+    if (!cfg.heartbeat?.enabled) return;
+    if (!cfg.discord?.webhookUrl) return;
+
+    const everyMs = Math.max(1, Number(cfg.heartbeat.everyHours) || 12) * 3_600_000;
+    const last = state.lastHeartbeatAt ? Date.parse(state.lastHeartbeatAt) : null;
+    // First ever run sends one immediately so a restart is visibly confirmed;
+    // the persisted timestamp stops it repeating on the next start.
+    if (last && Date.now() - last < everyMs) return;
+  }
+
+  const books = activeAdapters(cfg).map((a) => a.meta);
+  const payload = notify.buildHeartbeatPayload(
+    state,
+    cfg,
+    books,
+    force ? null : Date.now() - STARTED_AT
+  );
+
+  try {
+    await notify.sendDiscord(cfg.discord.webhookUrl, payload);
+    // A manual --heartbeat is an extra on-demand check, not the scheduled one:
+    // it must not reset the timer. It also runs in a separate process while the
+    // daemon owns state.json, so writing here would just get clobbered anyway.
+    if (!force) state.lastHeartbeatAt = new Date().toISOString();
+    console.log(`[${ts()}] heartbeat sent`);
+  } catch (err) {
+    // Never let a status post take the watcher down.
+    console.log(`[${ts()}] heartbeat failed: ${err.message.slice(0, 100)}`);
+  }
+}
+
 async function runCycle(state, cfg, force = false) {
   for (const adapter of activeAdapters(cfg)) {
     if (force || due(adapter)) await pollOne(adapter, state, cfg);
   }
+  await maybeHeartbeat(state, cfg);
   state.lastRun = new Date().toISOString();
   await store.save(STATE_PATH, state);
 }
@@ -296,6 +336,12 @@ async function main() {
   if (args.has('--status')) return cmdStatus(cfg);
   if (args.has('--test-notify')) return cmdTestNotify(cfg);
   if (args.has('--simulate')) return cmdSimulate(cfg);
+  if (args.has('--heartbeat')) {
+    // Read-only: never writes state, so it is safe to run alongside the daemon.
+    const st = await store.load(STATE_PATH);
+    await maybeHeartbeat(st, cfg, true); // force, ignores the interval
+    return;
+  }
 
   const state = await store.load(STATE_PATH);
   const books = activeAdapters(cfg).map((a) => a.meta.name).join(', ');

@@ -16,5 +16,13 @@
     "betr": true,
     "pick6": true
   },
-  "quietHours": { "enabled": false, "startHour": 2, "endHour": 8 }
+  "quietHours": {
+    "enabled": false,
+    "startHour": 2,
+    "endHour": 8
+  },
+  "heartbeat": {
+    "enabled": true,
+    "everyHours": 12
+  }
 }
