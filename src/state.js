@@ -70,9 +70,33 @@ export function diff(state, book, props) {
   return { newProps, moved, fresh, removed };
 }
 
+// How many consecutive polls a prop may be absent before we forget it.
+// Books drop props from their feed transiently - Betr's per-event queries fail
+// individually, boards get rebuilt mid-refresh - and forgetting a prop the
+// moment it blinks out is destructive: when it returns at a NEW value there is
+// no stored value to compare against, so a line MOVE is misreported as a brand
+// new prop. Carrying it for a few polls keeps move detection intact.
+const MAX_MISSES = 5;
+
 export function commit(state, book, fresh, ok = true) {
+  const prior = state.books[book]?.props || {};
+  const merged = {};
+
+  // Everything seen this poll, with its miss counter cleared.
+  for (const [k, v] of Object.entries(fresh)) {
+    const { misses, ...rest } = v;
+    merged[k] = rest;
+  }
+
+  // Props absent this poll: keep their last known value for a while.
+  for (const [k, v] of Object.entries(prior)) {
+    if (k in merged) continue;
+    const misses = (v.misses || 0) + 1;
+    if (misses < MAX_MISSES) merged[k] = { ...v, misses };
+  }
+
   state.books[book] = {
-    props: fresh,
+    props: merged,
     updatedAt: new Date().toISOString(),
     healthy: ok,
   };

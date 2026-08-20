@@ -50,6 +50,9 @@ export function buildDiscordPayload(alert, cfg) {
   const embeds = [];
   for (const [event, list] of groupByEvent(props)) {
     const lines = list.slice(0, 24).map((p) => {
+      // A market we can see is open but whose numbers the book won't serve.
+      if (p.note) return `**${p.statLabel}** — ${p.note}`;
+
       const who = p.fighter ? `**${p.fighter}**` : '*(market opened)*';
       if (p.previousValue != null && p.value != null) {
         return `${who} — ${p.statLabel} \`${fmt(p.previousValue)}\` → \`${fmt(p.value)}\` ${moveDelta(p.previousValue, p.value)}`;

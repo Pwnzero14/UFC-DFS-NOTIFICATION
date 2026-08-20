@@ -135,6 +135,9 @@ export async function fetchProps() {
       startsAt: null,
       url: meta.boardUrl,
       tabOnly: true,
+      note:
+        'market is OPEN on Pick6 — DraftKings only serves line values for the ' +
+        'tab it selects first, so open the app to see the numbers',
     });
   }
 

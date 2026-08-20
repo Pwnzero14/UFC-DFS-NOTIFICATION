@@ -238,6 +238,50 @@ test('a genuine drop still pings', () => {
   assert.match(payload.content, /@everyone/);
 });
 
+console.log('\nfeed churn');
+test('a prop that blinks out and returns at a new value is a MOVE, not a new prop', () => {
+  const state = { books: {} };
+  const at = (v) => [fantasyProp({ book: 'betr', value: v })];
+
+  // Seen at 91.5
+  let d = store.diff(state, 'betr', at(91.5));
+  store.commit(state, 'betr', d.fresh);
+
+  // Vanishes from the feed for a poll (partial fetch, failed sub-query, ...)
+  d = store.diff(state, 'betr', []);
+  store.commit(state, 'betr', d.fresh);
+
+  // Returns at 96.5 - this must be a move, not a fresh "PROPS ARE UP" alert.
+  d = store.diff(state, 'betr', at(96.5));
+  assert.equal(d.newProps.length, 0, 'must NOT be reported as a new prop');
+  assert.equal(d.moved.length, 1, 'must be reported as a move');
+  assert.equal(d.moved[0].previousValue, 91.5);
+});
+
+test('a prop absent long enough is eventually forgotten', () => {
+  const state = { books: {} };
+  let d = store.diff(state, 'betr', [fantasyProp({ book: 'betr', value: 91.5 })]);
+  store.commit(state, 'betr', d.fresh);
+
+  for (let i = 0; i < 5; i++) {
+    d = store.diff(state, 'betr', []);
+    store.commit(state, 'betr', d.fresh);
+  }
+  assert.equal(Object.keys(state.books.betr.props).length, 0, 'stale prop should be dropped');
+});
+
+test('a prop present every poll never accrues misses', () => {
+  const state = { books: {} };
+  const p = [fantasyProp({ book: 'betr', value: 91.5 })];
+  for (let i = 0; i < 8; i++) {
+    const d = store.diff(state, 'betr', p);
+    store.commit(state, 'betr', d.fresh);
+  }
+  const only = Object.values(state.books.betr.props)[0];
+  assert.equal(only.misses, undefined, 'misses must reset while the prop is present');
+  assert.equal(only.value, 91.5);
+});
+
 console.log('\ndelivery failures');
 test('a prop held back after a failed send is re-detected next poll', () => {
   const state = { books: {} };
