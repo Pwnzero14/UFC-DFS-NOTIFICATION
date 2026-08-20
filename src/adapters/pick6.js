@@ -4,14 +4,81 @@
 //   1. the stat category tabs (role="tab")  <- the real drop detector
 //   2. the player cards for the selected tab (data-testid="playerStatCard")
 //
-// Caveat: DK selects the first tab server-side and the selection is not
-// URL-addressable, so line VALUES are only readable for whichever category
-// DK shows first. Tab presence is still detected for every category, so a
-// "Fantasy Points" tab appearing always fires an alert even if its numbers
-// can't be read on that same poll.
+// DK selects the first tab server-side and the selection is not
+// URL-addressable, so the HTML only carries values for whichever category DK
+// shows first. For a fantasy tab we therefore drive headless Chrome and click
+// it (see below); everything else is read straight from the HTML.
 
 import { getText } from '../http.js';
 import { classify } from '../fantasy.js';
+import { evaluateOnPage, findBrowser } from '../browser.js';
+
+// DraftKings serves line values only for the tab it renders first (Significant
+// Strikes). The other categories' numbers are not in the HTML, the .data
+// payload, or any reachable endpoint - switching tabs is client-side state and
+// is not URL-addressable. The only way to read them is to actually click.
+//
+// So when a fantasy tab is present we drive the already-installed Chrome over
+// the DevTools protocol, click that tab, and read the rendered grid. If that
+// fails for any reason we fall back to reporting the market as open without
+// values, which is strictly better than nothing and never breaks the poll.
+const FANTASY_TAB_SCRIPT = `(async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const tabsNow = () => [...document.querySelectorAll('[role="tab"]')];
+
+  for (let i = 0; i < 60; i++) {
+    if (tabsNow().length && document.querySelectorAll('[data-testid="playerStatCard"]').length) break;
+    await sleep(250);
+  }
+
+  const target = tabsNow().find(t => /fantasy/i.test(t.textContent || ''));
+  if (!target) return { error: 'no fantasy tab' };
+
+  const readCards = () => [...document.querySelectorAll('[data-testid="playerStatCard"]')].map(c => {
+    const name = c.querySelector('[data-testid="player-name"]');
+    const txt = (c.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
+    const num = txt.find(t => /^\\d+(\\.\\d+)?$/.test(t)) || null;
+    const opp = txt.find(t => /^vs /i.test(t)) || null;
+    return { fighter: name ? name.textContent.trim() : (txt[0] || null), value: num, opponent: opp };
+  });
+
+  const before = JSON.stringify(readCards());
+  target.click();
+
+  // The grid empties while it re-renders - wait for it to come back populated.
+  let cards = [];
+  for (let i = 0; i < 60; i++) {
+    await sleep(300);
+    const sel = tabsNow().find(t => t.getAttribute('aria-selected') === 'true');
+    const selName = sel ? (sel.textContent || '').trim() : '';
+    cards = readCards();
+    const withValues = cards.filter(c => c.value !== null).length;
+    if (/fantasy/i.test(selName) && withValues >= 2 && JSON.stringify(cards) !== before) break;
+  }
+
+  const sel = tabsNow().find(t => t.getAttribute('aria-selected') === 'true');
+  return { selected: sel ? (sel.textContent || '').trim() : null, cards };
+})()`;
+
+/** "A. Wint" + "vs Chatman" -> "Chatman vs Wint", identical for both fighters. */
+function matchupKey(fighter, opponent) {
+  if (!fighter || !opponent) return null;
+  const mine = String(fighter).replace(/^[A-Z]\.\s*/, '').trim();
+  const theirs = String(opponent).replace(/^vs\s+/i, '').trim();
+  if (!mine || !theirs) return null;
+  return [mine, theirs].sort((a, b) => a.localeCompare(b)).join(' vs ');
+}
+
+async function fetchFantasyViaBrowser() {
+  const out = await evaluateOnPage(URL, FANTASY_TAB_SCRIPT, { timeoutMs: 90000 });
+  if (!out || out.error) throw new Error(out?.error || 'no result from page');
+  if (!/fantasy/i.test(out.selected || '')) {
+    throw new Error(`fantasy tab did not become selected (got "${out.selected}")`);
+  }
+  const cards = (out.cards || []).filter((c) => c.fighter && c.value != null);
+  if (!cards.length) throw new Error('fantasy tab selected but no values rendered');
+  return cards;
+}
 
 const URL = 'https://pick6.draftkings.com/?sport=UFC';
 
@@ -20,7 +87,9 @@ export const meta = {
   name: 'DraftKings Pick6',
   color: 0x53d337,
   boardUrl: 'https://pick6.draftkings.com/?sport=UFC',
-  minIntervalMs: 90_000,
+  // Reading fantasy values means launching headless Chrome (~7s), so poll a
+  // little less aggressively than the pure-HTTP books.
+  minIntervalMs: 120_000,
 };
 
 const TAB_RE =
@@ -122,6 +191,34 @@ export async function fetchProps() {
   // A tab with no readable numbers still counts as a market being offered.
   for (const tab of tabs) {
     if (tab.label === selected) continue;
+
+    // For a fantasy tab, go get the real numbers rather than just flagging it.
+    if (classify(meta.key, tab.label) === 'fantasy' && findBrowser()) {
+      try {
+        const cards = await fetchFantasyViaBrowser();
+        for (const card of cards) {
+          props.push({
+            book: meta.key,
+            id: `${tab.label}:${card.fighter}`,
+            fighter: card.fighter,
+            statLabel: tab.label,
+            statKey: tab.label,
+            kind: 'fantasy',
+            value: Number(card.value),
+            status: 'open',
+            // Canonical matchup so both fighters in a bout share one group,
+            // rather than each becoming its own single-line embed.
+            event: matchupKey(card.fighter, card.opponent),
+            startsAt: null,
+            url: meta.boardUrl,
+          });
+        }
+        continue; // got real values; no need for the placeholder
+      } catch (err) {
+        console.log(`[pick6] fantasy values unavailable (${err.message}) - reporting tab only`);
+      }
+    }
+
     props.push({
       book: meta.key,
       id: `tab:${tab.label}`,

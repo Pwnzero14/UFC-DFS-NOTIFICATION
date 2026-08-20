@@ -47,8 +47,44 @@ export function buildDiscordPayload(alert, cfg) {
       ? `📈 ${bookMeta.name} — fantasy line ${props.length === 1 ? 'move' : 'moves'}`
       : `👀 ${bookMeta.name} — new UFC market: ${props[0]?.statLabel}`;
 
+  const groups = groupByEvent(props);
+
+  // Discord hard-caps a message at 10 embeds. A big drop (Pick6 posts 26
+  // fighters at once) would silently lose everything past the tenth, so when
+  // there are too many events, list them flat instead of one embed per fight.
+  if (groups.size > 10) {
+    const flat = [...props].sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
+    const embeds = [];
+    for (let i = 0; i < flat.length; i += 24) {
+      const slice = flat.slice(i, i + 24);
+      embeds.push({
+        title: i === 0 ? `${props.length} lines` : `…continued`,
+        description: slice
+          .map((p) => {
+            const who = p.fighter ? `**${p.fighter}**` : '*(market)*';
+            return p.previousValue != null && p.value != null
+              ? `${who} \`${fmt(p.previousValue)}\` → \`${fmt(p.value)}\` ${moveDelta(p.previousValue, p.value)}`
+              : `${who} — \`${fmt(p.value)}\``;
+          })
+          .join('\n'),
+        color: bookMeta.color,
+        url: bookMeta.boardUrl,
+        footer: { text: `${bookMeta.name} • ${props[0]?.statLabel || ''}` },
+        timestamp: new Date().toISOString(),
+      });
+    }
+    const mention = cfg.discord?.mention || '';
+    const ping = isFantasy || (isMove && cfg.discord?.mentionOnLineMove === true);
+    return {
+      username: cfg.discord?.username || 'UFC Fantasy Alerts',
+      content: ping && mention ? `${mention} ${title}`.trim() : title,
+      embeds: embeds.slice(0, 10),
+      allowed_mentions: { parse: ['everyone', 'roles', 'users'] },
+    };
+  }
+
   const embeds = [];
-  for (const [event, list] of groupByEvent(props)) {
+  for (const [event, list] of groups) {
     const lines = list.slice(0, 24).map((p) => {
       // A market we can see is open but whose numbers the book won't serve.
       if (p.note) return `**${p.statLabel}** — ${p.note}`;
