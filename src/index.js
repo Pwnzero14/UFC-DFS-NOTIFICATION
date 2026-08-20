@@ -68,13 +68,18 @@ async function dispatch(alert, cfg) {
   }
 
   const url = cfg.discord?.webhookUrl;
-  if (url) {
-    try {
-      await notify.sendDiscord(url, notify.buildDiscordPayload(alert, cfg));
-      console.log('   [discord] sent');
-    } catch (err) {
-      console.log(`   [discord failed] ${err.message}`);
-    }
+  if (!url) return true;
+
+  try {
+    await notify.sendDiscord(url, notify.buildDiscordPayload(alert, cfg));
+    console.log('   [discord] sent');
+    return true;
+  } catch (err) {
+    // Report failure so the caller can decline to mark these props as seen.
+    // Swallowing this used to lose the alert permanently: the new value was
+    // committed to state, the next poll saw no change, and you were never told.
+    console.log(`   [discord FAILED - will retry next poll] ${err.message}`);
+    return false;
   }
 }
 
@@ -124,8 +129,24 @@ async function pollOne(adapter, state, cfg) {
         (firstRun ? ' | baseline' : '')
     );
 
+    // Any prop whose alert failed to deliver must NOT be recorded as seen, or
+    // the next poll finds no change and the alert is lost for good. Holding the
+    // previous value back means it is re-detected and re-sent next time.
+    const undelivered = new Set();
     for (const alert of buildAlerts(adapter, result, cfg, firstRun)) {
-      await dispatch(alert, cfg);
+      const ok = await dispatch(alert, cfg);
+      if (!ok) for (const p of alert.props) undelivered.add(store.propKey(p));
+    }
+
+    if (undelivered.size) {
+      const prior = state.books[key]?.props || {};
+      for (const k of undelivered) {
+        if (prior[k]) result.fresh[k] = prior[k]; // rewind to force a re-alert
+        else delete result.fresh[k]; // never seen before: treat as still-new
+      }
+      console.log(
+        `[${ts()}] ${adapter.meta.name.padEnd(18)} ${undelivered.size} prop(s) held back for retry`
+      );
     }
 
     store.commit(state, key, result.fresh, true);

@@ -238,6 +238,44 @@ test('a genuine drop still pings', () => {
   assert.match(payload.content, /@everyone/);
 });
 
+console.log('\ndelivery failures');
+test('a prop held back after a failed send is re-detected next poll', () => {
+  const state = { books: {} };
+
+  // Poll 1: baseline with the old value.
+  let d = store.diff(state, 'betr', [fantasyProp({ book: 'betr', value: 91.5 })]);
+  store.commit(state, 'betr', d.fresh);
+
+  // Poll 2: value moves, but delivery fails - rewind that key (what pollOne does).
+  const movedProps = [fantasyProp({ book: 'betr', value: 96.5 })];
+  d = store.diff(state, 'betr', movedProps);
+  assert.equal(d.moved.length, 1, 'move must be detected');
+
+  const prior = state.books.betr.props;
+  const k = store.propKey(movedProps[0]);
+  d.fresh[k] = prior[k]; // simulate the held-back rewind
+  store.commit(state, 'betr', d.fresh);
+
+  // Poll 3: same live value - must be detected AGAIN because we never recorded it.
+  const d3 = store.diff(state, 'betr', movedProps);
+  assert.equal(d3.moved.length, 1, 'held-back move must resurface');
+  assert.equal(d3.moved[0].previousValue, 91.5);
+  assert.equal(d3.moved[0].value, 96.5);
+});
+
+test('without the rewind the alert would be lost (regression guard)', () => {
+  const state = { books: {} };
+  let d = store.diff(state, 'betr', [fantasyProp({ book: 'betr', value: 91.5 })]);
+  store.commit(state, 'betr', d.fresh);
+
+  const movedProps = [fantasyProp({ book: 'betr', value: 96.5 })];
+  d = store.diff(state, 'betr', movedProps);
+  store.commit(state, 'betr', d.fresh); // commit WITHOUT rewinding
+
+  const d3 = store.diff(state, 'betr', movedProps);
+  assert.equal(d3.moved.length, 0, 'this is the silent-loss path the rewind prevents');
+});
+
 console.log('\nheartbeat');
 const BOOKS = [
   { key: 'underdog', name: 'Underdog' },

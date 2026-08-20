@@ -142,15 +142,44 @@ export function buildHeartbeatPayload(state, cfg, books, uptimeMs) {
   };
 }
 
-export async function sendDiscord(webhookUrl, payload) {
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Post to Discord, honouring its rate limit.
+ *
+ * Discord allows roughly 5 requests per 2s per webhook and answers 429 with a
+ * Retry-After. The shared HTTP layer deliberately does NOT retry 429s - that is
+ * right for the books, where backing off is the correct response, but for
+ * Discord it means silently dropping an alert. So retry here instead.
+ */
+export async function sendDiscord(webhookUrl, payload, { attempts = 4 } = {}) {
   if (!webhookUrl) return { skipped: 'no webhook configured' };
-  const res = await request(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    retries: 3,
-  });
-  return { status: res.status };
+
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await request(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        retries: 1,
+      });
+      return { status: res.status };
+    } catch (err) {
+      lastErr = err;
+      if (err.status === 429) {
+        // Retry-After is seconds; give it a beat more than asked for.
+        await sleepMs((err.retryAfterMs || 2000) + 250);
+        continue;
+      }
+      if (err.status >= 500 || !err.status) {
+        await sleepMs(1000 * (i + 1));
+        continue;
+      }
+      throw err; // 4xx that isn't 429 will not fix itself
+    }
+  }
+  throw lastErr;
 }
 
 /** Native Windows 10/11 toast. Best-effort: never throws into the poll loop. */
