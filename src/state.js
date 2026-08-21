@@ -17,11 +17,42 @@ export async function load(path) {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Atomic-ish save that tolerates the file briefly being held open.
+ *
+ * The rename can fail with EPERM/EBUSY when something else has state.json open
+ * at that instant - the tray widget polls it, and OneDrive syncs this folder.
+ * That killed the watcher once. A save is never worth crashing over: retry the
+ * rename, then fall back to writing in place, and let the caller carry on
+ * either way.
+ */
 export async function save(path, state) {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
-  await writeFile(tmp, JSON.stringify(state, null, 2), 'utf8');
-  await rename(tmp, path);
+  const json = JSON.stringify(state, null, 2);
+  await writeFile(tmp, json, 'utf8');
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await rename(tmp, path);
+      return;
+    } catch (err) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(err.code) || attempt === 4) {
+        // Last resort: write straight to the target. Less atomic, but a
+        // momentarily torn file beats losing the process.
+        try {
+          await writeFile(path, json, 'utf8');
+          return;
+        } catch {
+          console.warn(`[state] could not persist (${err.code}) - will retry next cycle`);
+          return;
+        }
+      }
+      await sleep(120 * (attempt + 1));
+    }
+  }
 }
 
 // Kinds worth telling you about: fantasy points on the DFS books, and the

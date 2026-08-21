@@ -231,7 +231,13 @@ async function runCycle(state, cfg, force = false) {
   }
   await maybeHeartbeat(state, cfg);
   state.lastRun = new Date().toISOString();
-  await store.save(STATE_PATH, state);
+  // save() already retries and degrades rather than throwing, but never let a
+  // persistence problem take the whole watcher down - it did exactly that once.
+  try {
+    await store.save(STATE_PATH, state);
+  } catch (err) {
+    console.log(`[${ts()}] state save failed (${err.code || err.message}) - continuing`);
+  }
 }
 
 // ------------------------------------------------------------------- commands

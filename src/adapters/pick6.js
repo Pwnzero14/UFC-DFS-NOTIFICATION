@@ -215,7 +215,13 @@ export async function fetchProps() {
         }
         continue; // got real values; no need for the placeholder
       } catch (err) {
-        console.log(`[pick6] fantasy values unavailable (${err.message}) - reporting tab only`);
+        // A transient browser failure must NOT fall through to the tab-only
+        // placeholder. That placeholder is a different prop key, so it reads as
+        // a brand-new fantasy prop and fires a full "PROPS ARE UP" ping - for a
+        // degradation rather than a drop. Throwing instead lets the scheduler
+        // back off and the stored values carry over untouched, which is what
+        // actually happened: one failed Chrome start, one false alarm.
+        throw new Error(`fantasy values unavailable: ${err.message}`);
       }
     }
 
