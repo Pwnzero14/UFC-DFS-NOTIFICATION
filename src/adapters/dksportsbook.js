@@ -101,17 +101,49 @@ const SCRIPT = `(async () => {
   const tabsSeen = [...document.querySelectorAll('a[class*="tab-switcher-tab"]')]
     .map(e => (e.textContent || '').trim());
 
+  // Each tab can hold several sub-filter pills - "SIGNIFICANT STRIKES O/U"
+  // today, with "ROUND 1 SIGNIFICANT STRIKES O/U" expected alongside it. Only
+  // the selected pill's markets are rendered, so every pill has to be clicked
+  // or the others are invisible.
+  const pillTexts = () => [...new Set(
+    [...document.querySelectorAll('button,a,span,div')]
+      .filter(e => e.children.length === 0)
+      .map(e => (e.textContent || '').trim())
+      .filter(t => /O\\/U$/i.test(t) && !/ Total /i.test(t) && t.length > 2 && t.length < 60)
+  )];
+
+  const clickPill = async (text) => {
+    const leaf = [...document.querySelectorAll('button,a,span,div')]
+      .find(e => e.children.length === 0 && (e.textContent || '').trim() === text);
+    if (!leaf) return false;
+    (leaf.closest('button,a,[role="button"],[role="tab"]') || leaf).click();
+    await sleep(1000);
+    return true;
+  };
+
+  const pillsSeen = {};
+
   for (const name of __TABS__) {
     const tab = tabEl(name);
     if (!tab) continue;
     tab.click();
-    await sleep(800);
+    await sleep(900);
     await wait(() => /Total .+ O\\/U/i.test(document.body.innerText), 30);
-    await loadAll();
-    for (const mk of parseMarkets()) results.push({ ...mk, tab: name });
+
+    const pills = pillTexts();
+    pillsSeen[name] = pills;
+
+    // No pills exposed: just read whatever the tab renders.
+    for (const pill of pills.length ? pills : [null]) {
+      if (pill) await clickPill(pill);
+      await loadAll();
+      for (const mk of parseMarkets()) {
+        results.push({ ...mk, tab: name, pill: pill || null });
+      }
+    }
   }
 
-  return { tabsSeen, markets: results };
+  return { tabsSeen, pillsSeen, markets: results };
 })()`;
 
 export async function fetchProps() {
