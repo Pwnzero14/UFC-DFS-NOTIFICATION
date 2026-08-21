@@ -238,6 +238,77 @@ test('a genuine drop still pings', () => {
   assert.match(payload.content, /@everyone/);
 });
 
+console.log('\nunderdog watched markets');
+// Underdog has not posted these yet, so cover the naming variants it might use
+// rather than waiting to find out live.
+for (const [label, key] of [
+  ['Round 1 Significant Strikes', 'round_1_significant_strikes'],
+  ['Round 1 Sig Strikes', 'round_1_sig_strikes'],
+  ['1st Round Significant Strikes', 'first_round_significant_strikes'],
+  ['Round 1 Significant Strikes O/U', 'round_1_significant_strikes'],
+]) {
+  test(`"${label}" is tracked, not a quiet unknown`, () => {
+    assert.equal(classify('underdog', label, key), 'tracked');
+  });
+}
+
+test('a tracked prop alerts on a drop', () => {
+  const state = { books: {} };
+  const base = prop({ book: 'underdog' });
+  let d = store.diff(state, 'underdog', [base]);
+  store.commit(state, 'underdog', d.fresh);
+
+  const r1 = prop({
+    book: 'underdog',
+    statKey: 'round_1_significant_strikes',
+    statLabel: 'Round 1 Significant Strikes',
+    kind: 'tracked',
+    value: 12.5,
+  });
+  d = store.diff(state, 'underdog', [base, r1]);
+  assert.equal(d.newProps.length, 1);
+  assert.ok(store.ALERTING_KINDS.has(d.newProps[0].kind), 'must be an alerting kind');
+});
+
+test('a tracked prop alerts on a line move in either direction', () => {
+  const state = { books: {} };
+  const at = (v) =>
+    prop({
+      book: 'underdog',
+      statKey: 'round_1_significant_strikes',
+      statLabel: 'Round 1 Significant Strikes',
+      kind: 'tracked',
+      value: v,
+    });
+
+  let d = store.diff(state, 'underdog', [at(12.5)]);
+  store.commit(state, 'underdog', d.fresh);
+
+  d = store.diff(state, 'underdog', [at(14.5)]);
+  assert.equal(d.moved.length, 1, 'upward move');
+  assert.equal(d.moved[0].previousValue, 12.5);
+  store.commit(state, 'underdog', d.fresh);
+
+  d = store.diff(state, 'underdog', [at(11.5)]);
+  assert.equal(d.moved.length, 1, 'downward move');
+  assert.equal(d.moved[0].value, 11.5);
+});
+
+test('underdog ordinary markets stay quiet', () => {
+  assert.equal(classify('underdog', 'Significant Strikes', 'significant_strikes'), 'known');
+  assert.equal(classify('underdog', 'Takedowns', 'takedowns'), 'known');
+  assert.equal(classify('underdog', 'Knockouts', 'knockouts'), 'known');
+});
+
+test('underdog fantasy still classifies as fantasy, not tracked', () => {
+  assert.equal(classify('underdog', 'Fantasy Points', 'fantasy_points'), 'fantasy');
+});
+
+test('the watched list is per-book: pick6 round 1 is not underdog', () => {
+  // Only Underdog was asked for; other books keep their existing behaviour.
+  assert.notEqual(classify('pick6', 'Round 1 Significant Strikes'), 'tracked');
+});
+
 console.log('\nfeed churn');
 test('a prop that blinks out and returns at a new value is a MOVE, not a new prop', () => {
   const state = { books: {} };

@@ -35,6 +35,31 @@ const KNOWN_NON_FANTASY = {
   ],
 };
 
+// Non-fantasy markets we want treated as first-class: they ping on a drop and
+// on a line move, exactly like fantasy points, rather than falling through to
+// the quiet "new market" notice.
+//
+// The DK Sportsbook adapter sets kind:'tracked' itself because every market it
+// reports is one we asked for. The DFS books report their whole board, so they
+// need this list to say which of it matters.
+const WATCHED_PATTERNS = {
+  underdog: [
+    // Tolerant on purpose - Underdog has not posted this yet, so the exact
+    // wording is unknown. Covers "Round 1" / "Rd 1" / "1st Round", "Sig" or
+    // "Significant", and underscored stat keys like
+    // round_1_significant_strikes - note [\W_] rather than \W, since underscore
+    // counts as a WORD character and \W would not match it. (?!\d) keeps
+    // "Round 10" out.
+    /(?:round|rd)[\W_]*1(?!\d)[\s\S]{0,14}sig(?:nificant)?[\W_]*strikes/i,
+    /1st[\W_]*(?:round|rd)[\W_][\s\S]{0,14}sig(?:nificant)?[\W_]*strikes/i,
+  ],
+};
+
+export function isWatchedStat(book, ...labels) {
+  const hay = labels.filter(Boolean).join(' ');
+  return (WATCHED_PATTERNS[book] || []).some((re) => re.test(hay));
+}
+
 export function isFantasyStat(...labels) {
   const hay = labels.filter(Boolean).join(' ');
   return FANTASY_PATTERNS.some((re) => re.test(hay));
@@ -49,11 +74,13 @@ export function isKnownStat(book, label) {
 /**
  * Classify a stat label for a book.
  * -> 'fantasy'  : this is the drop you're waiting for
+ * -> 'tracked'  : another market we explicitly watch; alerts like fantasy does
  * -> 'known'    : an ordinary non-fantasy prop, ignore
  * -> 'unknown'  : never seen before; worth a heads-up (safety net)
  */
 export function classify(book, ...labels) {
   if (isFantasyStat(...labels)) return 'fantasy';
+  if (isWatchedStat(book, ...labels)) return 'tracked';
   const primary = labels.find(Boolean) || '';
   return isKnownStat(book, primary) ? 'known' : 'unknown';
 }
