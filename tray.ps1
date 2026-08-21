@@ -91,14 +91,67 @@ $notify.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 
+# A balloon tip caps out around 255 characters, which truncates after two
+# books. Use a small window instead so the whole board always fits.
+function Show-StatusWindow {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'UFC Prop Alerts'
+    $form.StartPosition = 'CenterScreen'
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.TopMost = $true
+    $form.ClientSize = New-Object System.Drawing.Size(430, 210)
+    $form.BackColor = [System.Drawing.Color]::FromArgb(24, 24, 28)
+
+    $box = New-Object System.Windows.Forms.TextBox
+    $box.Multiline = $true
+    $box.ReadOnly = $true
+    $box.BorderStyle = 'None'
+    $box.Font = New-Object System.Drawing.Font('Consolas', 10)
+    $box.BackColor = [System.Drawing.Color]::FromArgb(24, 24, 28)
+    $box.ForeColor = [System.Drawing.Color]::Gainsboro
+    $box.Location = New-Object System.Drawing.Point(14, 12)
+    $box.Size = New-Object System.Drawing.Size(402, 150)
+    $box.Text = (Get-StatusText) -replace "`n", "`r`n"
+    $box.TabStop = $false
+    $form.Controls.Add($box)
+
+    $refresh = New-Object System.Windows.Forms.Button
+    $refresh.Text = 'Refresh'
+    $refresh.Location = New-Object System.Drawing.Point(240, 172)
+    $refresh.Size = New-Object System.Drawing.Size(80, 26)
+    $refresh.add_Click({ $box.Text = (Get-StatusText) -replace "`n", "`r`n" })
+    $form.Controls.Add($refresh)
+
+    $close = New-Object System.Windows.Forms.Button
+    $close.Text = 'Close'
+    $close.Location = New-Object System.Drawing.Point(330, 172)
+    $close.Size = New-Object System.Drawing.Size(80, 26)
+    $close.add_Click({ $form.Close() })
+    $form.Controls.Add($close)
+
+    $form.CancelButton = $close   # Esc closes it
+    [void]$form.ShowDialog()
+    $form.Dispose()
+}
+
 $miStatus = $menu.Items.Add('Show status')
-$miStatus.add_Click({
-    $notify.BalloonTipTitle = 'UFC Prop Alerts'
-    $notify.BalloonTipText  = Get-StatusText
-    $notify.ShowBalloonTip(10000)
+$miStatus.add_Click({ Show-StatusWindow })
+
+# A live tail is what you actually want: newest lines, already at the bottom,
+# updating as it polls. Notepad opens a 120k-character file at line 1, which is
+# this morning's entries and useless without a lot of scrolling.
+$miTail = $menu.Items.Add('Watch log (live)')
+$miTail.add_Click({
+    if (-not (Test-Path $logPath)) { return }
+    Start-Process powershell.exe -ArgumentList @(
+        '-NoProfile','-NoExit','-Command',
+        "`$host.UI.RawUI.WindowTitle='UFC watcher log'; Get-Content -LiteralPath '$logPath' -Tail 40 -Wait"
+    )
 })
 
-$miLog = $menu.Items.Add('Open log')
+$miLog = $menu.Items.Add('Open full log')
 $miLog.add_Click({ if (Test-Path $logPath) { Start-Process notepad.exe $logPath } })
 
 $miFolder = $menu.Items.Add('Open project folder')
@@ -133,11 +186,7 @@ $miExit.add_Click({
 })
 
 $notify.ContextMenuStrip = $menu
-$notify.add_MouseDoubleClick({
-    $notify.BalloonTipTitle = 'UFC Prop Alerts'
-    $notify.BalloonTipText  = Get-StatusText
-    $notify.ShowBalloonTip(10000)
-})
+$notify.add_MouseDoubleClick({ Show-StatusWindow })
 
 # --- tooltip refresh -------------------------------------------------------
 # NotifyIcon.Text is capped at 63 characters, so keep the hover text terse and
