@@ -16,6 +16,11 @@ const KNOWN_NON_FANTASY = {
     'significant strikes', 'finishes', 'knockouts', 'submissions',
     'fight time (mins)', 'takedowns', 'fight time', 'round of victory',
     'significant strikes attempted', 'control time', 'knockdowns',
+    // Round-finish markets: 82 props across five variants, none of them asked
+    // for. Identified by the unknown-stat safety net, which is what it is for -
+    // it surfaces a new market once, then it gets classified and goes quiet.
+    '1st round finish', '2nd round finish', '3rd round finish',
+    '4th round finish', '5th round finish',
   ],
   prizepicks: [
     'fight time (mins)', 'total rounds', 'significant strikes', 'takedowns',
