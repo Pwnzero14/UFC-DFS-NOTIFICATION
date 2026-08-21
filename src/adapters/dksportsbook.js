@@ -76,19 +76,30 @@ const SCRIPT = `(async () => {
     await sleep(400);
   };
 
+  // Headings come in two shapes and only one of them says "Total":
+  //   "Reinier de Ridder Total Significant Strikes O/U"
+  //   "Reinier de Ridder Round 1 Significant Strikes O/U"
+  // Anchoring on "Total" made every Round N market invisible - the pill was
+  // clicked, the markets rendered, and nothing matched. Accept either lead-in.
+  const HEADING = /^(.+?)\\s+((?:Total|Round\\s+\\d+)\\b.*?)\\s*O\\/U$/i;
+
   const parseMarkets = () => {
     const lines = document.body.innerText.split('\\n').map(s => s.trim()).filter(Boolean);
     const out = [];
     for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(/^(.+?) Total (.+?) O\\/U$/i);
+      const m = lines[i].match(HEADING);
       if (!m) continue;
       const w = lines.slice(i + 1, i + 9).join(' | ');
       const over = w.match(/Over\\s+([0-9]+(?:\\.[0-9]+)?)/i);
       if (!over) continue;
       const odds = [...w.matchAll(/([+-]\\d{3,4})/g)].map(x => x[1]);
+      // "Total Significant Strikes" -> "Significant Strikes";
+      // "Round 1 Significant Strikes" is kept verbatim so it stays a distinct
+      // market from the full-fight line.
+      const market = m[2].trim().replace(/^Total\\s+/i, '');
       out.push({
         fighter: m[1].trim(),
-        market: m[2].trim(),
+        market,
         line: Number(over[1]),
         overOdds: odds[0] || null,
         underOdds: odds[1] || null,
