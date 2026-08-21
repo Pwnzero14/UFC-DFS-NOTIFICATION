@@ -72,10 +72,15 @@ export function buildDiscordPayload(alert, cfg) {
 
   const groups = groupByEvent(props);
 
-  // Discord hard-caps a message at 10 embeds. A big drop (Pick6 posts 26
-  // fighters at once) would silently lose everything past the tenth, so when
-  // there are too many events, list them flat instead of one embed per fight.
-  if (groups.size > 10) {
+  // Two reasons to render a flat list instead of one embed per fight:
+  //   - Discord hard-caps a message at 10 embeds, so more than that silently
+  //     loses lines (a 26-fighter fantasy drop would lose 16).
+  //   - Even under the cap, one embed per fight is unreadable when most fights
+  //     contribute a single line. Ten Control Time props became nine stacked
+  //     embeds, and only the first was visible without scrolling.
+  // An embed per fight only earns its space when fights actually group.
+  const mostlySingletons = groups.size >= 4 && props.length / groups.size < 1.5;
+  if (groups.size > 10 || mostlySingletons) {
     const flat = [...props].sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
     const embeds = [];
     for (let i = 0; i < flat.length; i += 24) {
