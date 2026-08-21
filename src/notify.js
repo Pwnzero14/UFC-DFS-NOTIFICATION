@@ -9,6 +9,16 @@ import { request } from './http.js';
 
 const fmt = (v) => (v == null ? '—' : String(v));
 
+/** Control Time is stored as seconds so moves can be compared; show it back
+ *  as mm:ss, which is how the book displays it. */
+const asClock = (secs) => {
+  const n = Math.round(Number(secs));
+  if (!Number.isFinite(n)) return fmt(secs);
+  return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+};
+
+const shown = (p, v) => (p?.unit === 'time' ? asClock(v) : fmt(v));
+
 function fightTime(iso) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -28,12 +38,14 @@ function groupByEvent(props) {
   return map;
 }
 
-/** "+2.51" / "-1.00" with a direction arrow. */
-export function moveDelta(from, to) {
+/** "+2.51" / "-1.00" with a direction arrow. Time markets read in seconds. */
+export function moveDelta(from, to, unit) {
   const d = Number(to) - Number(from);
   const arrow = d > 0 ? '🔺' : '🔻';
   const sign = d > 0 ? '+' : '';
-  return `${arrow} ${sign}${d.toFixed(2)}`;
+  return unit === 'time'
+    ? `${arrow} ${sign}${Math.round(d)}s`
+    : `${arrow} ${sign}${d.toFixed(2)}`;
 }
 
 export function buildDiscordPayload(alert, cfg) {
@@ -74,8 +86,8 @@ export function buildDiscordPayload(alert, cfg) {
           .map((p) => {
             const who = p.fighter ? `**${p.fighter}**` : '*(market)*';
             return p.previousValue != null && p.value != null
-              ? `${who} \`${fmt(p.previousValue)}\` → \`${fmt(p.value)}\` ${moveDelta(p.previousValue, p.value)}`
-              : `${who} — \`${fmt(p.value)}\``;
+              ? `${who} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit)}`
+              : `${who} — \`${shown(p, p.value)}\``;
           })
           .join('\n'),
         color: bookMeta.color,
@@ -102,9 +114,9 @@ export function buildDiscordPayload(alert, cfg) {
 
       const who = p.fighter ? `**${p.fighter}**` : '*(market opened)*';
       if (p.previousValue != null && p.value != null) {
-        return `${who} — ${p.statLabel} \`${fmt(p.previousValue)}\` → \`${fmt(p.value)}\` ${moveDelta(p.previousValue, p.value)}`;
+        return `${who} — ${p.statLabel} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit)}`;
       }
-      return `${who} — ${p.statLabel} \`${fmt(p.value)}\``;
+      return `${who} — ${p.statLabel} \`${shown(p, p.value)}\``;
     });
 
     const when = fightTime(list[0]?.startsAt);

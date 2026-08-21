@@ -332,6 +332,49 @@ test('the watched list is per-book: pick6 round 1 is not underdog', () => {
   assert.notEqual(classify('pick6', 'Round 1 Significant Strikes'), 'tracked');
 });
 
+console.log('\ntime-valued markets');
+test('a time move renders as mm:ss with a seconds delta', () => {
+  const p = buildDiscordPayload(
+    {
+      kind: 'move',
+      bookMeta: { name: 'DraftKings Pick6', color: 0, boardUrl: 'https://x' },
+      props: [
+        {
+          fighter: 'A. Hernandez',
+          statLabel: 'Control Time',
+          value: 330,
+          previousValue: 390,
+          unit: 'time',
+          event: 'Hernandez vs Rodrigues',
+        },
+      ],
+    },
+    {}
+  );
+  const body = p.embeds[0].description;
+  assert.match(body, /6:30/, 'old value as clock');
+  assert.match(body, /5:30/, 'new value as clock');
+  assert.match(body, /-60s/, 'delta in seconds');
+  assert.doesNotMatch(body, /390|330/, 'raw seconds must not leak into the text');
+});
+
+test('non-time markets are unaffected by the clock formatting', () => {
+  assert.equal(moveDelta(105.5, 108.5), '\u{1F53A} +3.00');
+  const p = buildDiscordPayload(
+    {
+      kind: 'move',
+      bookMeta: { name: 'DraftKings Pick6', color: 0, boardUrl: 'https://x' },
+      props: [fantasyProp({ value: 108.5, previousValue: 105.5 })],
+    },
+    {}
+  );
+  assert.match(p.embeds[0].description, /105\.5.*108\.5/);
+});
+
+test('control time is an alerting kind', () => {
+  assert.ok(store.ALERTING_KINDS.has('tracked'));
+});
+
 console.log('\nfeed churn');
 test('a prop that blinks out and returns at a new value is a MOVE, not a new prop', () => {
   const state = { books: {} };

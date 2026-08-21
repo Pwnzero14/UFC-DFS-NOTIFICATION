@@ -22,42 +22,81 @@ import { evaluateOnPage, findBrowser } from '../browser.js';
 // the DevTools protocol, click that tab, and read the rendered grid. If that
 // fails for any reason we fall back to reporting the market as open without
 // values, which is strictly better than nothing and never breaks the poll.
-const FANTASY_TAB_SCRIPT = `(async () => {
+// One browser session collects every market that needs a click, so Chrome is
+// launched once per poll rather than once per market.
+//
+// Control Time lives behind a sub-pill on the Time tab, and its values are
+// mm:ss ("06:30") rather than plain numbers - the card reader accepts both and
+// the adapter converts to seconds so moves can be compared.
+const BROWSER_SCRIPT = `(async () => {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const tabsNow = () => [...document.querySelectorAll('[role="tab"]')];
+  const selectedTab = () => {
+    const t = tabsNow().find(x => x.getAttribute('aria-selected') === 'true');
+    return t ? (t.textContent || '').trim() : '';
+  };
 
   for (let i = 0; i < 60; i++) {
     if (tabsNow().length && document.querySelectorAll('[data-testid="playerStatCard"]').length) break;
     await sleep(250);
   }
 
-  const target = tabsNow().find(t => /fantasy/i.test(t.textContent || ''));
-  if (!target) return { error: 'no fantasy tab' };
-
   const readCards = () => [...document.querySelectorAll('[data-testid="playerStatCard"]')].map(c => {
     const name = c.querySelector('[data-testid="player-name"]');
     const txt = (c.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
-    const num = txt.find(t => /^\\d+(\\.\\d+)?$/.test(t)) || null;
-    const opp = txt.find(t => /^vs /i.test(t)) || null;
-    return { fighter: name ? name.textContent.trim() : (txt[0] || null), value: num, opponent: opp };
+    // mm:ss first (Control Time), otherwise the first bare number.
+    const value = txt.find(t => /^\\d{1,2}:\\d{2}$/.test(t))
+               || txt.find(t => /^\\d+(\\.\\d+)?$/.test(t))
+               || null;
+    return {
+      fighter: name ? name.textContent.trim() : (txt[0] || null),
+      value,
+      label: txt.find(t => /^(control|fight)\\s+time$/i.test(t)) || null,
+      opponent: txt.find(t => /^vs /i.test(t)) || null,
+    };
   });
 
-  const before = JSON.stringify(readCards());
-  target.click();
+  const clickLeaf = async (re) => {
+    const leaf = [...document.querySelectorAll('button,a,div,span')]
+      .find(e => e.children.length === 0 && re.test((e.textContent || '').trim()));
+    if (!leaf) return false;
+    (leaf.closest('button,a,[role="button"],[role="radio"],[role="tab"]') || leaf).click();
+    await sleep(2200);
+    return true;
+  };
 
-  // The grid empties while it re-renders - wait for it to come back populated.
-  let cards = [];
-  for (let i = 0; i < 60; i++) {
-    await sleep(300);
-    const sel = tabsNow().find(t => t.getAttribute('aria-selected') === 'true');
-    const selName = sel ? (sel.textContent || '').trim() : '';
-    cards = readCards();
-    const withValues = cards.filter(c => c.value !== null).length;
-    if (/fantasy/i.test(selName) && withValues >= 2 && JSON.stringify(cards) !== before) break;
+  // Select a tab and wait for the grid to repopulate - it empties mid-render.
+  const openTab = async (re) => {
+    const tab = tabsNow().find(t => re.test((t.textContent || '').trim()));
+    if (!tab) return false;
+    const before = JSON.stringify(readCards());
+    tab.click();
+    for (let i = 0; i < 60; i++) {
+      await sleep(300);
+      const cards = readCards();
+      const withValues = cards.filter(c => c.value !== null).length;
+      if (re.test(selectedTab()) && withValues >= 2 && JSON.stringify(cards) !== before) return true;
+    }
+    return re.test(selectedTab());
+  };
+
+  const out = { fantasy: null, controlTime: null, tabs: tabsNow().map(t => (t.textContent || '').trim()) };
+
+  if (await openTab(/fantasy/i)) {
+    out.fantasy = readCards().filter(c => c.fighter && c.value != null);
   }
 
-  const sel = tabsNow().find(t => t.getAttribute('aria-selected') === 'true');
-  return { selected: sel ? (sel.textContent || '').trim() : null, cards };
+  if (await openTab(/^time$/i)) {
+    // Fight Time is the default pill; Control Time needs an explicit click.
+    await clickLeaf(/^control\\s+time$/i);
+    const cards = readCards();
+    // Only accept it if the cards actually say Control Time.
+    if (cards.some(c => /control/i.test(c.label || ''))) {
+      out.controlTime = cards.filter(c => c.fighter && c.value != null && /control/i.test(c.label || ''));
+    }
+  }
+
+  return out;
 })()`;
 
 /** "A. Wint" + "vs Chatman" -> "Chatman vs Wint", identical for both fighters. */
@@ -69,15 +108,27 @@ function matchupKey(fighter, opponent) {
   return [mine, theirs].sort((a, b) => a.localeCompare(b)).join(' vs ');
 }
 
-async function fetchFantasyViaBrowser() {
-  const out = await evaluateOnPage(URL, FANTASY_TAB_SCRIPT, { timeoutMs: 90000 });
-  if (!out || out.error) throw new Error(out?.error || 'no result from page');
-  if (!/fantasy/i.test(out.selected || '')) {
-    throw new Error(`fantasy tab did not become selected (got "${out.selected}")`);
+/** "06:30" -> 390 seconds. Plain numbers pass straight through. */
+function toNumber(raw) {
+  const s = String(raw).trim();
+  const t = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (t) return Number(t[1]) * 60 + Number(t[2]);
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+const isTimeValue = (raw) => /^\d{1,2}:\d{2}$/.test(String(raw).trim());
+
+async function fetchClickedMarkets() {
+  const out = await evaluateOnPage(URL, BROWSER_SCRIPT, { timeoutMs: 120000 });
+  if (!out) throw new Error('no result from page');
+  if (!out.fantasy?.length) {
+    // Fantasy is the market this browser trip exists for; if it did not render,
+    // treat the whole trip as failed so the poll backs off rather than
+    // reporting a half-board.
+    throw new Error('fantasy tab produced no values');
   }
-  const cards = (out.cards || []).filter((c) => c.fighter && c.value != null);
-  if (!cards.length) throw new Error('fantasy tab selected but no values rendered');
-  return cards;
+  return out;
 }
 
 const URL = 'https://pick6.draftkings.com/?sport=UFC';
@@ -188,42 +239,72 @@ export async function fetchProps() {
     });
   }
 
+  // Markets that need a click: fantasy, and Control Time behind the Time tab.
+  // One browser trip covers both; anything it returns is emitted here, so the
+  // tab-only placeholder below is only reached for markets nobody asked for.
+  const hasFantasyTab = tabs.some((t) => classify(meta.key, t.label) === 'fantasy');
+  const hasTimeTab = tabs.some((t) => /^time$/i.test(t.label));
+  const clicked = { fantasy: null, controlTime: null };
+
+  if ((hasFantasyTab || hasTimeTab) && findBrowser()) {
+    try {
+      const got = await fetchClickedMarkets();
+      clicked.fantasy = got.fantasy;
+      clicked.controlTime = got.controlTime;
+    } catch (err) {
+      // A transient browser failure must NOT fall through to the tab-only
+      // placeholder. That placeholder is a different prop key, so it reads as
+      // a brand-new fantasy prop and fires a full "PROPS ARE UP" ping - for a
+      // degradation rather than a drop. Throwing instead lets the scheduler
+      // back off and the stored values carry over untouched.
+      throw new Error(`clicked markets unavailable: ${err.message}`);
+    }
+  }
+
+  for (const card of clicked.fantasy || []) {
+    props.push({
+      book: meta.key,
+      id: `Fantasy Points:${card.fighter}`,
+      fighter: card.fighter,
+      statLabel: 'Fantasy Points',
+      statKey: 'Fantasy Points',
+      kind: 'fantasy',
+      value: toNumber(card.value),
+      status: 'open',
+      // Canonical matchup so both fighters in a bout share one group,
+      // rather than each becoming its own single-line embed.
+      event: matchupKey(card.fighter, card.opponent),
+      startsAt: null,
+      url: meta.boardUrl,
+    });
+  }
+
+  for (const card of clicked.controlTime || []) {
+    props.push({
+      book: meta.key,
+      id: `Control Time:${card.fighter}`,
+      fighter: card.fighter,
+      statLabel: 'Control Time',
+      statKey: 'Control Time',
+      // Explicitly asked for, so it alerts on drops and moves like fantasy.
+      // Fight Time, the other pill on that tab, is deliberately not emitted.
+      kind: 'tracked',
+      value: toNumber(card.value),
+      unit: isTimeValue(card.value) ? 'time' : undefined,
+      status: 'open',
+      event: matchupKey(card.fighter, card.opponent),
+      startsAt: null,
+      url: meta.boardUrl,
+    });
+  }
+
+  const handled = new Set(['fantasy points']);
+  if (clicked.controlTime?.length) handled.add('time');
+
   // A tab with no readable numbers still counts as a market being offered.
   for (const tab of tabs) {
     if (tab.label === selected) continue;
-
-    // For a fantasy tab, go get the real numbers rather than just flagging it.
-    if (classify(meta.key, tab.label) === 'fantasy' && findBrowser()) {
-      try {
-        const cards = await fetchFantasyViaBrowser();
-        for (const card of cards) {
-          props.push({
-            book: meta.key,
-            id: `${tab.label}:${card.fighter}`,
-            fighter: card.fighter,
-            statLabel: tab.label,
-            statKey: tab.label,
-            kind: 'fantasy',
-            value: Number(card.value),
-            status: 'open',
-            // Canonical matchup so both fighters in a bout share one group,
-            // rather than each becoming its own single-line embed.
-            event: matchupKey(card.fighter, card.opponent),
-            startsAt: null,
-            url: meta.boardUrl,
-          });
-        }
-        continue; // got real values; no need for the placeholder
-      } catch (err) {
-        // A transient browser failure must NOT fall through to the tab-only
-        // placeholder. That placeholder is a different prop key, so it reads as
-        // a brand-new fantasy prop and fires a full "PROPS ARE UP" ping - for a
-        // degradation rather than a drop. Throwing instead lets the scheduler
-        // back off and the stored values carry over untouched, which is what
-        // actually happened: one failed Chrome start, one false alarm.
-        throw new Error(`fantasy values unavailable: ${err.message}`);
-      }
-    }
+    if (handled.has(tab.label.toLowerCase())) continue;
 
     props.push({
       book: meta.key,
