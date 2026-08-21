@@ -42,17 +42,27 @@ const KNOWN_NON_FANTASY = {
 // The DK Sportsbook adapter sets kind:'tracked' itself because every market it
 // reports is one we asked for. The DFS books report their whole board, so they
 // need this list to say which of it matters.
+// Round 1 significant strikes, spelled however a book decides to spell it.
+//
+// Neither book has posted this market yet, so the wording is guesswork and the
+// patterns are deliberately tolerant: "Round 1" / "Rd 1" / "1st Round", "Sig"
+// or "Significant", and underscored stat keys like round_1_significant_strikes
+// - note [\W_] rather than \W, since underscore counts as a WORD character and
+// \W would not match it. (?!\d) keeps "Round 10" out.
+//
+// Both orders matter: Underdog would likely lead with the round, while
+// PrizePicks parenthesises qualifiers ("Fight Time (Mins)"), so
+// "Significant Strikes (Round 1)" is just as likely.
+const ROUND1_SIG_STRIKES = [
+  /(?:round|rd)[\W_]*1(?!\d)[\s\S]{0,14}sig(?:nificant)?[\W_]*strikes/i,
+  /1st[\W_]*(?:round|rd)[\W_][\s\S]{0,14}sig(?:nificant)?[\W_]*strikes/i,
+  /sig(?:nificant)?[\W_]*strikes[\s\S]{0,14}(?:round|rd)[\W_]*1(?!\d)/i,
+  /sig(?:nificant)?[\W_]*strikes[\s\S]{0,14}1st[\W_]*(?:round|rd)/i,
+];
+
 const WATCHED_PATTERNS = {
-  underdog: [
-    // Tolerant on purpose - Underdog has not posted this yet, so the exact
-    // wording is unknown. Covers "Round 1" / "Rd 1" / "1st Round", "Sig" or
-    // "Significant", and underscored stat keys like
-    // round_1_significant_strikes - note [\W_] rather than \W, since underscore
-    // counts as a WORD character and \W would not match it. (?!\d) keeps
-    // "Round 10" out.
-    /(?:round|rd)[\W_]*1(?!\d)[\s\S]{0,14}sig(?:nificant)?[\W_]*strikes/i,
-    /1st[\W_]*(?:round|rd)[\W_][\s\S]{0,14}sig(?:nificant)?[\W_]*strikes/i,
-  ],
+  underdog: ROUND1_SIG_STRIKES,
+  prizepicks: ROUND1_SIG_STRIKES,
 };
 
 export function isWatchedStat(book, ...labels) {

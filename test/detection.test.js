@@ -304,6 +304,29 @@ test('underdog fantasy still classifies as fantasy, not tracked', () => {
   assert.equal(classify('underdog', 'Fantasy Points', 'fantasy_points'), 'fantasy');
 });
 
+test('PrizePicks round 1 is watched too, in either word order', () => {
+  for (const label of [
+    'Round 1 Significant Strikes',
+    'Significant Strikes (Round 1)',
+    '1st Round Sig Strikes',
+    'round_1_significant_strikes',
+  ]) {
+    assert.equal(classify('prizepicks', label), 'tracked', label);
+  }
+});
+
+test('PrizePicks ordinary markets stay quiet', () => {
+  for (const label of ['Total Rounds', 'Significant Strikes', 'Fight Time (Mins)', 'Takedowns']) {
+    assert.notEqual(classify('prizepicks', label), 'tracked', label);
+  }
+  assert.equal(classify('prizepicks', 'Fantasy Score'), 'fantasy');
+});
+
+test('a round 2 market is not mistaken for round 1', () => {
+  assert.notEqual(classify('prizepicks', 'Significant Strikes (Round 2)'), 'tracked');
+  assert.notEqual(classify('underdog', 'Round 2 Significant Strikes'), 'tracked');
+});
+
 test('the watched list is per-book: pick6 round 1 is not underdog', () => {
   // Only Underdog was asked for; other books keep their existing behaviour.
   assert.notEqual(classify('pick6', 'Round 1 Significant Strikes'), 'tracked');
