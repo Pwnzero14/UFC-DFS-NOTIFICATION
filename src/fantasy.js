@@ -24,7 +24,9 @@ const KNOWN_NON_FANTASY = {
   ],
   prizepicks: [
     'fight time (mins)', 'total rounds', 'significant strikes', 'takedowns',
-    'knockdowns', 'submission attempts', 'control time', 'fight time',
+    // 'knockdowns' deliberately NOT listed here - it is a watched market now,
+    // and a watched match is checked before this list anyway.
+    'submission attempts', 'control time', 'fight time',
     'significant strikes attempted',
   ],
   betr: [
@@ -65,9 +67,13 @@ const ROUND1_SIG_STRIKES = [
   /sig(?:nificant)?[\W_]*strikes[\s\S]{0,14}1st[\W_]*(?:round|rd)/i,
 ];
 
+// "Knockdown" is a distinct word from "Knockout", so this cannot collide with
+// the knockout markets every book also offers.
+const KNOCKDOWNS = [/knockdowns?\b/i, /knockdowns?_/i];
+
 const WATCHED_PATTERNS = {
   underdog: ROUND1_SIG_STRIKES,
-  prizepicks: ROUND1_SIG_STRIKES,
+  prizepicks: [...ROUND1_SIG_STRIKES, ...KNOCKDOWNS],
 };
 
 export function isWatchedStat(book, ...labels) {

@@ -322,6 +322,23 @@ test('PrizePicks ordinary markets stay quiet', () => {
   assert.equal(classify('prizepicks', 'Fantasy Score'), 'fantasy');
 });
 
+test('PrizePicks knockdowns are watched', () => {
+  for (const label of ['Knockdowns', 'Knockdown', 'Knockdowns Landed', 'knockdowns_landed']) {
+    assert.equal(classify('prizepicks', label), 'tracked', label);
+  }
+});
+
+test('knockdowns never collide with knockouts', () => {
+  for (const label of ['Knockouts', 'Knockout', 'KOs']) {
+    assert.notEqual(classify('prizepicks', label), 'tracked', label);
+  }
+});
+
+test('knockdowns are watched on PrizePicks only', () => {
+  assert.equal(classify('prizepicks', 'Knockdowns'), 'tracked');
+  assert.notEqual(classify('underdog', 'Knockdowns'), 'tracked');
+});
+
 test('a round 2 market is not mistaken for round 1', () => {
   assert.notEqual(classify('prizepicks', 'Significant Strikes (Round 2)'), 'tracked');
   assert.notEqual(classify('underdog', 'Round 2 Significant Strikes'), 'tracked');
