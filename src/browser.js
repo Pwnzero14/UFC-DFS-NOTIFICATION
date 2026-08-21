@@ -197,11 +197,24 @@ export async function evaluateOnPage(
     await loaded.catch(() => {}); // proceed on timeout; the script polls anyway
     await sleep(1200); // let the SPA hydrate before touching the DOM
 
-    const result = await send(
-      'Runtime.evaluate',
-      { expression: pageFunction, awaitPromise: true, returnByValue: true },
-      timeoutMs
-    );
+    // A site that redirects after load (Betr bounces logged-out visitors) tears
+    // down the execution context mid-evaluate. Settle and try once more against
+    // wherever it ended up rather than failing the whole poll.
+    let result;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        result = await send(
+          'Runtime.evaluate',
+          { expression: pageFunction, awaitPromise: true, returnByValue: true },
+          timeoutMs
+        );
+        break;
+      } catch (err) {
+        const transient = /navigated or closed|context was destroyed/i.test(err.message);
+        if (!transient || attempt === 1) throw err;
+        await sleep(3000);
+      }
+    }
 
     if (result.exceptionDetails) {
       throw new Error(
