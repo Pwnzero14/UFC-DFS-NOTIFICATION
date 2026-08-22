@@ -86,10 +86,24 @@ export function isFantasyStat(...labels) {
   return FANTASY_PATTERNS.some((re) => re.test(hay));
 }
 
+// Underdog keeps opening round-scoped finish markets - Round Finish, then
+// Round 1 Knockout, with Round N Submission and friends presumably to come.
+// Each one arrives as an unknown-market notice nobody wants, so match the
+// family by shape rather than adding them one at a time as they appear.
+//
+// This is only consulted AFTER the watched check, so Round 1 Significant
+// Strikes stays tracked - and none of these patterns mention strikes anyway.
+const KNOWN_PATTERNS = {
+  underdog: [
+    /^(?:round|rd)\s*\d+\s+(?:knockout|ko|submission|sub|finish|decision)/i,
+    /^\d(?:st|nd|rd|th)\s+round\s+(?:knockout|ko|submission|sub|finish|decision)/i,
+  ],
+};
+
 export function isKnownStat(book, label) {
-  const known = KNOWN_NON_FANTASY[book] || [];
   const norm = String(label || '').trim().toLowerCase();
-  return known.includes(norm);
+  if ((KNOWN_NON_FANTASY[book] || []).includes(norm)) return true;
+  return (KNOWN_PATTERNS[book] || []).some((re) => re.test(norm));
 }
 
 /**

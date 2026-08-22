@@ -322,6 +322,24 @@ test('PrizePicks ordinary markets stay quiet', () => {
   assert.equal(classify('prizepicks', 'Fantasy Score'), 'fantasy');
 });
 
+test('Underdog round-scoped finish markets stay quiet as a family', () => {
+  for (const label of [
+    'Round 1 Knockout', 'Round 2 Knockout', 'Round 3 Submission',
+    '1st Round Finish', '5th Round Finish', 'Round 1 Decision', 'RD 2 KO',
+  ]) {
+    assert.equal(classify('underdog', label), 'known', label);
+  }
+});
+
+test('silencing the round-finish family does not touch round 1 sig strikes', () => {
+  for (const label of [
+    'Round 1 Significant Strikes', 'RD 1 Significant Strikes', '1st Round Sig Strikes',
+  ]) {
+    assert.equal(classify('underdog', label), 'tracked', label);
+  }
+  assert.equal(classify('underdog', 'Fantasy Points'), 'fantasy');
+});
+
 test('PrizePicks knockdowns are watched', () => {
   for (const label of ['Knockdowns', 'Knockdown', 'Knockdowns Landed', 'knockdowns_landed']) {
     assert.equal(classify('prizepicks', label), 'tracked', label);
