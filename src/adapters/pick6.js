@@ -26,9 +26,18 @@ import { evaluateOnPage, findBrowser } from '../browser.js';
 // launched once per poll rather than once per market.
 //
 // Control Time lives behind a sub-pill on the Time tab, and its values are
-// mm:ss ("06:30") rather than plain numbers - the card reader accepts both and
-// the adapter converts to seconds so moves can be compared.
-const BROWSER_SCRIPT = `(async () => {
+// mm:ss ("06:30") rather than plain numbers - so the reader is told which
+// shape to expect per tab and the adapter converts mm:ss to seconds so moves
+// can be compared.
+//
+// Which shape to expect is not a detail. Once a bout drops under an hour away
+// DK renders a live countdown to lock inside every card for that fight, and it
+// is mm:ss like a Control Time value is. A reader that just takes "the first
+// mm:ss, else the first number" reads that clock as the line: on 2026-08-22 it
+// turned two Fantasy Points lines into 3587 and back down a poll at a time, one
+// @everyone ping every two minutes for four hours. So Fantasy reads numbers
+// only, and the Control Time pass skips the clock the Fantasy pass saw.
+export const BROWSER_SCRIPT = `(async () => {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const tabsNow = () => [...document.querySelectorAll('[role="tab"]')];
   const selectedTab = () => {
@@ -41,16 +50,31 @@ const BROWSER_SCRIPT = `(async () => {
     await sleep(250);
   }
 
-  const readCards = () => [...document.querySelectorAll('[data-testid="playerStatCard"]')].map(c => {
+  const CLOCK = /^\\d{1,2}:\\d{2}$/;
+  const NUMBER = /^\\d+(\\.\\d+)?$/;
+  const secs = t => Number(t.split(':')[0]) * 60 + Number(t.split(':')[1]);
+
+  // The Fantasy tab serves plain numbers, so any mm:ss on a card there is the
+  // lock countdown and nothing else. Remembering it per fighter is what lets
+  // the Control Time pass tell the clock from the line.
+  const countdown = {};
+  // The two passes are seconds apart, so the clock will have ticked down a
+  // little between them - match on proximity, not equality.
+  const TICK_SLACK = 60;
+
+  const readCards = (want) => [...document.querySelectorAll('[data-testid="playerStatCard"]')].map(c => {
     const name = c.querySelector('[data-testid="player-name"]');
     const txt = (c.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
-    // mm:ss first (Control Time), otherwise the first bare number.
-    const value = txt.find(t => /^\\d{1,2}:\\d{2}$/.test(t))
-               || txt.find(t => /^\\d+(\\.\\d+)?$/.test(t))
-               || null;
+    const fighter = name ? name.textContent.trim() : (txt[0] || null);
+    const clocks = txt.filter(t => CLOCK.test(t));
+    const ticking = countdown[fighter];
+    const value = want === 'clock'
+      ? clocks.find(t => ticking == null || Math.abs(secs(t) - ticking) > TICK_SLACK) || null
+      : txt.find(t => NUMBER.test(t)) || null;
     return {
-      fighter: name ? name.textContent.trim() : (txt[0] || null),
+      fighter,
       value,
+      clocks,
       label: txt.find(t => /^(control|fight)\\s+time$/i.test(t)) || null,
       opponent: txt.find(t => /^vs /i.test(t)) || null,
     };
@@ -66,14 +90,14 @@ const BROWSER_SCRIPT = `(async () => {
   };
 
   // Select a tab and wait for the grid to repopulate - it empties mid-render.
-  const openTab = async (re) => {
+  const openTab = async (re, want) => {
     const tab = tabsNow().find(t => re.test((t.textContent || '').trim()));
     if (!tab) return false;
-    const before = JSON.stringify(readCards());
+    const before = JSON.stringify(readCards(want));
     tab.click();
     for (let i = 0; i < 60; i++) {
       await sleep(300);
-      const cards = readCards();
+      const cards = readCards(want);
       const withValues = cards.filter(c => c.value !== null).length;
       if (re.test(selectedTab()) && withValues >= 2 && JSON.stringify(cards) !== before) return true;
     }
@@ -82,14 +106,19 @@ const BROWSER_SCRIPT = `(async () => {
 
   const out = { fantasy: null, controlTime: null, tabs: tabsNow().map(t => (t.textContent || '').trim()) };
 
-  if (await openTab(/fantasy/i)) {
-    out.fantasy = readCards().filter(c => c.fighter && c.value != null);
+  // Fantasy first, so the Control Time pass below inherits the countdowns.
+  if (await openTab(/fantasy/i, 'number')) {
+    const cards = readCards('number');
+    for (const c of cards) {
+      if (c.fighter && c.clocks.length) countdown[c.fighter] = secs(c.clocks[0]);
+    }
+    out.fantasy = cards.filter(c => c.fighter && c.value != null);
   }
 
-  if (await openTab(/^time$/i)) {
+  if (await openTab(/^time$/i, 'clock')) {
     // Fight Time is the default pill; Control Time needs an explicit click.
     await clickLeaf(/^control\\s+time$/i);
-    const cards = readCards();
+    const cards = readCards('clock');
     // Only accept it if the cards actually say Control Time.
     if (cards.some(c => /control/i.test(c.label || ''))) {
       out.controlTime = cards.filter(c => c.fighter && c.value != null && /control/i.test(c.label || ''));
@@ -118,6 +147,41 @@ function toNumber(raw) {
 }
 
 const isTimeValue = (raw) => /^\d{1,2}:\d{2}$/.test(String(raw).trim());
+
+// Backstop for anything the reader still picks up that cannot be a real line.
+// The countdown-as-a-line bug is fixed above, but the lesson generalises: this
+// adapter scrapes rendered text, so some future element will leak into a card
+// eventually, and it must not be able to reach Discord. Every clicked value has
+// to be physically possible for its market or it is not a value.
+const MAX_VALUE = {
+  // Pick6 UFC fantasy lines run roughly 25-115. 500 is far outside anything the
+  // book has ever posted while still catching a clock read as a number.
+  'Fantasy Points': 500,
+  // Control time cannot exceed the fight: five rounds of five minutes.
+  'Control Time': 25 * 60,
+};
+
+/**
+ * Convert a card value, or null it out if it is not a possible line.
+ *
+ * Nulled rather than dropped on purpose. A dropped card takes its prop key out
+ * of the poll, and after MAX_MISSES the store forgets it - so when the market
+ * recovers it reads as a brand-new prop and fires a full drop alert. Reporting
+ * the prop with a null value keeps the key alive: diff() will not raise a move
+ * against null in either direction, so a bad read goes quiet instead of loud,
+ * and the rest of the board keeps working.
+ */
+export function boundedValue(statLabel, raw) {
+  const n = toNumber(raw);
+  if (n == null) return null;
+  if (n < 0 || n > MAX_VALUE[statLabel]) {
+    console.log(
+      `   [pick6] ignoring impossible ${statLabel} value ${raw} (max ${MAX_VALUE[statLabel]})`
+    );
+    return null;
+  }
+  return n;
+}
 
 async function fetchClickedMarkets() {
   const out = await evaluateOnPage(URL, BROWSER_SCRIPT, { timeoutMs: 120000 });
@@ -269,7 +333,7 @@ export async function fetchProps() {
       statLabel: 'Fantasy Points',
       statKey: 'Fantasy Points',
       kind: 'fantasy',
-      value: toNumber(card.value),
+      value: boundedValue('Fantasy Points', card.value),
       status: 'open',
       // Canonical matchup so both fighters in a bout share one group,
       // rather than each becoming its own single-line embed.
@@ -289,7 +353,7 @@ export async function fetchProps() {
       // Explicitly asked for, so it alerts on drops and moves like fantasy.
       // Fight Time, the other pill on that tab, is deliberately not emitted.
       kind: 'tracked',
-      value: toNumber(card.value),
+      value: boundedValue('Control Time', card.value),
       unit: isTimeValue(card.value) ? 'time' : undefined,
       status: 'open',
       event: matchupKey(card.fighter, card.opponent),

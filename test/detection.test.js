@@ -5,11 +5,24 @@ import assert from 'node:assert/strict';
 import * as store from '../src/state.js';
 import { classify } from '../src/fantasy.js';
 import { buildDiscordPayload, moveDelta, buildHeartbeatPayload } from '../src/notify.js';
+import { BROWSER_SCRIPT, boundedValue } from '../src/adapters/pick6.js';
 
 let passed = 0;
 function test(name, fn) {
   try {
     fn();
+    console.log(`  PASS  ${name}`);
+    passed++;
+  } catch (err) {
+    console.log(`  FAIL  ${name}\n        ${err.message}`);
+    process.exitCode = 1;
+  }
+}
+
+/** Same thing for a test that has to await something. */
+async function atest(name, fn) {
+  try {
+    await fn();
     console.log(`  PASS  ${name}`);
     passed++;
   } catch (err) {
@@ -555,6 +568,146 @@ test('a manual heartbeat does not claim a bogus uptime', () => {
 test('a daemon heartbeat reports real uptime', () => {
   const p = buildHeartbeatPayload(healthyState, {}, BOOKS, 5 * 3_600_000 + 12 * 60_000);
   assert.match(p.embeds[0].footer.text, /up 5h 12m/);
+});
+
+// ------------------------------------------- Pick6: the lock countdown clock
+//
+// On 2026-08-22 the Pick6 reader started returning 3587 for two Fantasy Points
+// lines and walking it down ~138 every poll, one @everyone ping every couple of
+// minutes for four hours. 3587 is 59:47 in seconds: once a bout is under an
+// hour away DK renders a live countdown to lock inside its cards, the reader
+// preferred "the first mm:ss" over "the first number", and it read the clock.
+//
+// These run the REAL page script against a fake board rather than a copy of its
+// logic, so the thing under test is the string that actually ships.
+
+function fakeBoard({ countdownSecs = null } = {}) {
+  let selected = 'Significant Strikes';
+  let pill = 'Fight Time';
+  let ticking = countdownSecs;
+
+  const clock = () => {
+    if (ticking == null) return null;
+    ticking -= 1; // the clock keeps running between the two tab passes
+    return `${Math.floor(ticking / 60)}:${String(ticking % 60).padStart(2, '0')}`;
+  };
+
+  // fighter -> [opponent, stat lines]. The countdown is spliced in ahead of the
+  // stat value, which is what made the old "first mm:ss wins" reader take it.
+  const GRID = {
+    'Significant Strikes': [['S. Dyer', 'vs Reed', '54.5'], ['E. Reed', 'vs Dyer', '48.5']],
+    'Fantasy Points': [['S. Dyer', 'vs Reed', '93.5'], ['E. Reed', 'vs Dyer', '33.5']],
+    'Time/Fight Time': [
+      ['S. Dyer', 'vs Reed', '9:30', 'Fight Time'],
+      ['E. Reed', 'vs Dyer', '9:30', 'Fight Time'],
+    ],
+    'Time/Control Time': [
+      ['S. Dyer', 'vs Reed', '1:30', 'Control Time'],
+      ['E. Reed', 'vs Dyer', '0:45', 'Control Time'],
+    ],
+  };
+
+  const cardsNow = () => {
+    const rows = GRID[selected === 'Time' ? `Time/${pill}` : selected] || [];
+    return rows.map(([fighter, opponent, ...rest]) => {
+      const tick = clock();
+      const lines = [fighter, opponent, ...(tick ? [tick] : []), ...rest];
+      return {
+        innerText: lines.join('\n'),
+        querySelector: (sel) =>
+          sel.includes('player-name') ? { textContent: fighter } : null,
+      };
+    });
+  };
+
+  const tab = (label) => ({
+    textContent: label,
+    getAttribute: (a) => (a === 'aria-selected' ? String(selected === label) : null),
+    click() {
+      selected = label;
+      pill = 'Fight Time'; // the Time tab always opens on its default pill
+    },
+  });
+  const tabs = ['Significant Strikes', 'Fantasy Points', 'Time'].map(tab);
+
+  const leaf = (label) => ({
+    textContent: label,
+    children: [],
+    closest: () => null,
+    click() {
+      pill = label;
+    },
+  });
+  const leaves = [leaf('Fight Time'), leaf('Control Time')];
+
+  return {
+    querySelectorAll(sel) {
+      if (sel === '[role="tab"]') return tabs;
+      if (sel === '[data-testid="playerStatCard"]') return cardsNow();
+      if (sel === 'button,a,div,span') return leaves;
+      return [];
+    },
+  };
+}
+
+async function readBoard(opts) {
+  globalThis.document = fakeBoard(opts);
+  try {
+    return await eval(BROWSER_SCRIPT);
+  } finally {
+    delete globalThis.document;
+  }
+}
+
+const byFighter = (cards) =>
+  Object.fromEntries((cards || []).map((c) => [c.fighter, c.value]));
+
+await atest('a lock countdown is not read as a Fantasy Points line', async () => {
+  const out = await readBoard({ countdownSecs: 3587 }); // 59:47, the real one
+  assert.deepEqual(byFighter(out.fantasy), { 'S. Dyer': '93.5', 'E. Reed': '33.5' });
+});
+
+await atest('a lock countdown is not read as a Control Time line', async () => {
+  const out = await readBoard({ countdownSecs: 3587 });
+  assert.deepEqual(byFighter(out.controlTime), { 'S. Dyer': '1:30', 'E. Reed': '0:45' });
+});
+
+await atest('a countdown that has ticked down near the line is still skipped', async () => {
+  // The dangerous case is late in the hour, when the clock stops being an
+  // obvious outlier and starts looking like a plausible control time.
+  const out = await readBoard({ countdownSecs: 200 }); // 3:20, next to 1:30
+  assert.deepEqual(byFighter(out.controlTime), { 'S. Dyer': '1:30', 'E. Reed': '0:45' });
+  assert.deepEqual(byFighter(out.fantasy), { 'S. Dyer': '93.5', 'E. Reed': '33.5' });
+});
+
+await atest('a board with no countdown still reads both markets', async () => {
+  const out = await readBoard();
+  assert.deepEqual(byFighter(out.fantasy), { 'S. Dyer': '93.5', 'E. Reed': '33.5' });
+  assert.deepEqual(byFighter(out.controlTime), { 'S. Dyer': '1:30', 'E. Reed': '0:45' });
+});
+
+test('an impossible fantasy value is nulled, not published', () => {
+  assert.equal(boundedValue('Fantasy Points', '93.5'), 93.5);
+  assert.equal(boundedValue('Fantasy Points', 3587), null);
+});
+
+test('control time is capped at the length of a five round fight', () => {
+  assert.equal(boundedValue('Control Time', '6:30'), 390);
+  assert.equal(boundedValue('Control Time', '25:00'), 1500);
+  assert.equal(boundedValue('Control Time', '59:47'), null);
+});
+
+test('a nulled value cannot raise a line move in either direction', () => {
+  // This is why boundedValue nulls rather than drops: the prop key survives,
+  // so a bad read goes quiet instead of firing, and recovering from one does
+  // not read as a brand new prop and fire a drop alert.
+  const p = (value) => [prop({ book: 'pick6', kind: 'fantasy', value })];
+  let state = { books: {} };
+  store.commit(state, 'pick6', store.diff(state, 'pick6', p(93.5)).fresh);
+  assert.equal(store.diff(state, 'pick6', p(null)).moved.length, 0);
+  store.commit(state, 'pick6', store.diff(state, 'pick6', p(null)).fresh);
+  assert.equal(store.diff(state, 'pick6', p(93.5)).moved.length, 0);
+  assert.equal(store.diff(state, 'pick6', p(93.5)).newProps.length, 0);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);
