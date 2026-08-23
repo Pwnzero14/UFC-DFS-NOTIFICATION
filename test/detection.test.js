@@ -686,6 +686,25 @@ await atest('a board with no countdown still reads both markets', async () => {
   assert.deepEqual(byFighter(out.controlTime), { 'S. Dyer': '1:30', 'E. Reed': '0:45' });
 });
 
+await atest('a countdown is reported with the raw card text behind it', async () => {
+  // The diagnostic exists so a variant that slips past the reader leaves
+  // evidence, rather than having to be reconstructed from Discord embeds.
+  const out = await readBoard({ countdownSecs: 3587 });
+  assert.equal(out.countdowns.length, 2);
+  const [dyer] = out.countdowns;
+  assert.equal(dyer.fighter, 'S. Dyer');
+  // The fake clock ticks with every read, as the real one does, so assert the
+  // shape rather than an exact second.
+  assert.equal(dyer.clocks.length, 1);
+  assert.match(dyer.clocks[0], /^59:\d{2}$/);
+  assert.deepEqual(dyer.lines, ['S. Dyer', 'vs Reed', dyer.clocks[0], '93.5']);
+});
+
+await atest('a quiet board reports no countdowns to log', async () => {
+  const out = await readBoard();
+  assert.deepEqual(out.countdowns, []);
+});
+
 test('an impossible fantasy value is nulled, not published', () => {
   assert.equal(boundedValue('Fantasy Points', '93.5'), 93.5);
   assert.equal(boundedValue('Fantasy Points', 3587), null);

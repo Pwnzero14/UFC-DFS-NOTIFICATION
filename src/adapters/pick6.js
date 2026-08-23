@@ -75,6 +75,9 @@ export const BROWSER_SCRIPT = `(async () => {
       fighter,
       value,
       clocks,
+      // Carried only when there is a clock to explain, so the diagnostic below
+      // has the raw card text without every ordinary card hauling it back.
+      lines: clocks.length ? txt : undefined,
       label: txt.find(t => /^(control|fight)\\s+time$/i.test(t)) || null,
       opponent: txt.find(t => /^vs /i.test(t)) || null,
     };
@@ -113,6 +116,9 @@ export const BROWSER_SCRIPT = `(async () => {
       if (c.fighter && c.clocks.length) countdown[c.fighter] = secs(c.clocks[0]);
     }
     out.fantasy = cards.filter(c => c.fighter && c.value != null);
+    out.countdowns = cards
+      .filter(c => c.fighter && c.clocks.length)
+      .map(c => ({ fighter: c.fighter, clocks: c.clocks, lines: c.lines }));
   }
 
   if (await openTab(/^time$/i, 'clock')) {
@@ -183,6 +189,31 @@ export function boundedValue(statLabel, raw) {
   return n;
 }
 
+// Fighters whose countdown has already been recorded this run.
+const dumpedCountdown = new Set();
+
+/**
+ * Record what a card actually says the first time a fighter's clock appears.
+ *
+ * The countdown bug had to be reconstructed backwards from Discord embeds,
+ * because nothing anywhere kept what the page said - only what we made of it.
+ * The reader should handle the clock now, but if a variant ever slips past it
+ * again this is the evidence, captured at the moment it mattered.
+ *
+ * Once per fighter, so a full card costs about a dozen lines rather than one
+ * every two minutes for the hour each bout spends inside its countdown.
+ */
+function logCountdowns(countdowns) {
+  for (const c of countdowns || []) {
+    if (!c.fighter || dumpedCountdown.has(c.fighter)) continue;
+    dumpedCountdown.add(c.fighter);
+    console.log(
+      `   [pick6] lock countdown on ${c.fighter}: clocks ${JSON.stringify(c.clocks)}` +
+        ` card ${JSON.stringify(c.lines)}`
+    );
+  }
+}
+
 async function fetchClickedMarkets() {
   const out = await evaluateOnPage(URL, BROWSER_SCRIPT, { timeoutMs: 120000 });
   if (!out) throw new Error('no result from page');
@@ -192,6 +223,7 @@ async function fetchClickedMarkets() {
     // reporting a half-board.
     throw new Error('fantasy tab produced no values');
   }
+  logCountdowns(out.countdowns);
   return out;
 }
 
