@@ -65,7 +65,10 @@ test('Pick6 "Fantasy Points" tab is fantasy', () => {
   assert.equal(classify('pick6', 'Fantasy Points'), 'fantasy');
 });
 test('Sig Strikes is NOT fantasy', () => {
-  assert.equal(classify('underdog', 'Significant Strikes'), 'known');
+  // Watched since it was asked for, but it must never be mistaken for the
+  // fantasy drop - that is the alert the whole watcher exists to catch.
+  assert.equal(classify('underdog', 'Significant Strikes'), 'tracked');
+  assert.equal(classify('betr', 'Significant Strikes'), 'known');
 });
 test('Total Rounds is NOT fantasy', () => {
   assert.equal(classify('prizepicks', 'Total Rounds'), 'known');
@@ -308,9 +311,36 @@ test('a tracked prop alerts on a line move in either direction', () => {
 });
 
 test('underdog ordinary markets stay quiet', () => {
-  assert.equal(classify('underdog', 'Significant Strikes', 'significant_strikes'), 'known');
-  assert.equal(classify('underdog', 'Takedowns', 'takedowns'), 'known');
   assert.equal(classify('underdog', 'Knockouts', 'knockouts'), 'known');
+  assert.equal(classify('underdog', 'Control Time', 'control_time'), 'known');
+  assert.equal(classify('underdog', 'Fight Time (Mins)', 'fight_time'), 'known');
+});
+
+test('underdog full-fight sig strikes and takedowns are watched', () => {
+  assert.equal(classify('underdog', 'Significant Strikes', 'significant_strikes'), 'tracked');
+  assert.equal(classify('underdog', 'Takedowns', 'takedowns'), 'tracked');
+});
+
+test('the attempted markets are not swept up with the ones asked for', () => {
+  // The trap: "Significant Strikes Attempted" contains "Significant Strikes".
+  // It is a different line, and promoting it would ping on a market nobody
+  // asked about.
+  assert.equal(
+    classify('underdog', 'Significant Strikes Attempted', 'significant_strikes_attempted'),
+    'known'
+  );
+});
+
+test('watching underdog sig strikes does not leak to the other books', () => {
+  assert.equal(classify('betr', 'Significant Strikes', 'significant_strikes'), 'known');
+  assert.equal(classify('prizepicks', 'Significant Strikes', 'significant_strikes'), 'known');
+  assert.equal(classify('pick6', 'Takedowns', 'takedowns'), 'known');
+});
+
+test('round 1 sig strikes is still watched in its own right', () => {
+  // The new whole-name patterns must not have displaced the round-scoped ones.
+  assert.equal(classify('underdog', 'Round 1 Significant Strikes'), 'tracked');
+  assert.equal(classify('underdog', 'round_1_significant_strikes'), 'tracked');
 });
 
 test('underdog fantasy still classifies as fantasy, not tracked', () => {
