@@ -41,7 +41,11 @@ const KNOWN_NON_FANTASY = {
     'submissions', 'knockouts', 'round of victory',
   ],
   pick6: [
-    'significant strikes', 'knockouts', 'takedowns', 'submissions',
+    // 'significant strikes' NOT listed - it is watched now, so a rename should
+    // surface as an unknown stat rather than going quietly known. 'takedowns'
+    // DOES stay: it is watched via the adapter's explicit kind, not from here,
+    // and its tab-only placeholder is meant to classify known and stay quiet.
+    'knockouts', 'takedowns', 'submissions',
     'fight time', 'fight time (mins)', 'significant strikes attempted',
     'knockdowns', 'control time', 'total rounds', 'finishes',
   ],
@@ -89,14 +93,20 @@ const KNOCKDOWNS = [/knockdowns?\b/i, /knockdowns?_/i];
 // Both the display name and the underscored stat key are covered, since either
 // may be the one that arrives: Underdog sends "Significant Strikes" with
 // significant_strikes, and "Takedowns" with takedowns.
-const FULL_FIGHT_SIG_STRIKES_AND_TAKEDOWNS = [
-  /^sig(?:nificant)?[\W_]*strikes$/i,
-  /^takedowns$/i,
-];
+const FULL_FIGHT_SIG_STRIKES = [/^sig(?:nificant)?[\W_]*strikes$/i];
+const FULL_FIGHT_TAKEDOWNS = [/^takedowns$/i];
 
+// Pick6 gets strikes but deliberately NOT takedowns, even though both are
+// watched there. Its takedown props are built by the adapter with an explicit
+// kind:'tracked' and never consult this file - but the tab-only placeholder,
+// emitted when a tab is on the board and its values could not be read, does.
+// That placeholder carries a different prop key, so a watched one would read as
+// a brand new prop and fire a drop alert for what is really a degraded read.
+// Left unwatched here, it stays quiet and the real prop is still tracked.
 const WATCHED_PATTERNS = {
-  underdog: [...ROUND1_SIG_STRIKES, ...FULL_FIGHT_SIG_STRIKES_AND_TAKEDOWNS],
+  underdog: [...ROUND1_SIG_STRIKES, ...FULL_FIGHT_SIG_STRIKES, ...FULL_FIGHT_TAKEDOWNS],
   prizepicks: [...ROUND1_SIG_STRIKES, ...KNOCKDOWNS],
+  pick6: [...FULL_FIGHT_SIG_STRIKES],
 };
 
 /**

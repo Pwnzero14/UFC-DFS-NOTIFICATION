@@ -331,9 +331,24 @@ test('the attempted markets are not swept up with the ones asked for', () => {
   );
 });
 
-test('watching underdog sig strikes does not leak to the other books', () => {
+test('watching sig strikes does not leak to the books that did not ask', () => {
   assert.equal(classify('betr', 'Significant Strikes', 'significant_strikes'), 'known');
   assert.equal(classify('prizepicks', 'Significant Strikes', 'significant_strikes'), 'known');
+});
+
+test('pick6 full-fight sig strikes is watched', () => {
+  assert.equal(classify('pick6', 'Significant Strikes', 'significant_strikes'), 'tracked');
+  assert.equal(
+    classify('pick6', 'Significant Strikes Attempted', 'significant_strikes_attempted'),
+    'known'
+  );
+});
+
+test('pick6 takedowns classify known so the tab placeholder stays quiet', () => {
+  // The real Pick6 takedown props are built with an explicit kind:'tracked' and
+  // never reach classify. The tab-only placeholder does, and it carries a
+  // different prop key - watched, it would read as a brand new prop and fire a
+  // drop alert for what is only a failed read of a market already on the board.
   assert.equal(classify('pick6', 'Takedowns', 'takedowns'), 'known');
 });
 
