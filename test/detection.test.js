@@ -611,7 +611,8 @@ test('a daemon heartbeat reports real uptime', () => {
 // These run the REAL page script against a fake board rather than a copy of its
 // logic, so the thing under test is the string that actually ships.
 
-function fakeBoard({ countdownSecs = null } = {}) {
+function fakeBoard(opts = {}) {
+  const { countdownSecs = null } = opts;
   let selected = 'Significant Strikes';
   let pill = 'Fight Time';
   let ticking = countdownSecs;
@@ -627,6 +628,7 @@ function fakeBoard({ countdownSecs = null } = {}) {
   const GRID = {
     'Significant Strikes': [['S. Dyer', 'vs Reed', '54.5'], ['E. Reed', 'vs Dyer', '48.5']],
     'Fantasy Points': [['S. Dyer', 'vs Reed', '93.5'], ['E. Reed', 'vs Dyer', '33.5']],
+    Takedowns: [['S. Dyer', 'vs Reed', '1.5'], ['E. Reed', 'vs Dyer', '2.5']],
     'Time/Fight Time': [
       ['S. Dyer', 'vs Reed', '9:30', 'Fight Time'],
       ['E. Reed', 'vs Dyer', '9:30', 'Fight Time'],
@@ -658,7 +660,7 @@ function fakeBoard({ countdownSecs = null } = {}) {
       pill = 'Fight Time'; // the Time tab always opens on its default pill
     },
   });
-  const tabs = ['Significant Strikes', 'Fantasy Points', 'Time'].map(tab);
+  const tabs = (opts.tabs || ['Significant Strikes', 'Fantasy Points', 'Takedowns', 'Time']).map(tab);
 
   const leaf = (label) => ({
     textContent: label,
@@ -733,6 +735,40 @@ await atest('a countdown is reported with the raw card text behind it', async ()
 await atest('a quiet board reports no countdowns to log', async () => {
   const out = await readBoard();
   assert.deepEqual(out.countdowns, []);
+});
+
+await atest('takedowns are read off their own tab', async () => {
+  const out = await readBoard();
+  assert.deepEqual(byFighter(out.takedowns), { 'S. Dyer': '1.5', 'E. Reed': '2.5' });
+});
+
+await atest('a countdown is not read as a takedown line either', async () => {
+  const out = await readBoard({ countdownSecs: 3587 });
+  assert.deepEqual(byFighter(out.takedowns), { 'S. Dyer': '1.5', 'E. Reed': '2.5' });
+});
+
+await atest('a board with takedowns but no fantasy tab still reads them', async () => {
+  // Days out, DK has posted Significant Strikes and little else. The trip has
+  // to work for whichever tabs exist rather than assuming fantasy is up.
+  const out = await readBoard({ tabs: ['Significant Strikes', 'Takedowns'] });
+  assert.equal(out.fantasy, null);
+  assert.deepEqual(byFighter(out.takedowns), { 'S. Dyer': '1.5', 'E. Reed': '2.5' });
+});
+
+await atest('takedowns still dodge the clock with no fantasy tab to learn from', async () => {
+  // With no fantasy pass, the Takedowns pass is what teaches Control Time the
+  // countdown - and must not be fooled by it itself.
+  const out = await readBoard({
+    tabs: ['Takedowns', 'Time'],
+    countdownSecs: 3587,
+  });
+  assert.deepEqual(byFighter(out.takedowns), { 'S. Dyer': '1.5', 'E. Reed': '2.5' });
+  assert.deepEqual(byFighter(out.controlTime), { 'S. Dyer': '1:30', 'E. Reed': '0:45' });
+});
+
+test('an impossible takedown value is nulled too', () => {
+  assert.equal(boundedValue('Takedowns', '2.5'), 2.5);
+  assert.equal(boundedValue('Takedowns', 3587), null);
 });
 
 test('an impossible fantasy value is nulled, not published', () => {

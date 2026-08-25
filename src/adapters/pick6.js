@@ -18,12 +18,16 @@ import { evaluateOnPage, findBrowser } from '../browser.js';
 // payload, or any reachable endpoint - switching tabs is client-side state and
 // is not URL-addressable. The only way to read them is to actually click.
 //
-// So when a fantasy tab is present we drive the already-installed Chrome over
-// the DevTools protocol, click that tab, and read the rendered grid. If that
-// fails for any reason we fall back to reporting the market as open without
-// values, which is strictly better than nothing and never breaks the poll.
-// One browser session collects every market that needs a click, so Chrome is
-// launched once per poll rather than once per market.
+// So for the markets we want - fantasy, Takedowns, Control Time - we drive the
+// already-installed Chrome over the DevTools protocol, click the tab, and read
+// the rendered grid. If that fails for any reason we fall back to reporting the
+// market as open without values, which is strictly better than nothing and
+// never breaks the poll. One browser session collects every market that needs a
+// click, so Chrome is launched once per poll rather than once per market.
+//
+// DK posts the tabs as the card fills in - days out the board is Significant
+// Strikes alone - so every one of them is optional and the trip is made for
+// whichever have shown up.
 //
 // Control Time lives behind a sub-pill on the Time tab, and its values are
 // mm:ss ("06:30") rather than plain numbers - so the reader is told which
@@ -107,18 +111,40 @@ export const BROWSER_SCRIPT = `(async () => {
     return re.test(selectedTab());
   };
 
-  const out = { fantasy: null, controlTime: null, tabs: tabsNow().map(t => (t.textContent || '').trim()) };
+  const out = {
+    fantasy: null,
+    takedowns: null,
+    controlTime: null,
+    tabs: tabsNow().map(t => (t.textContent || '').trim()),
+  };
 
-  // Fantasy first, so the Control Time pass below inherits the countdowns.
+  // Any mm:ss on a tab that serves numbers is a clock, so every numbers pass
+  // teaches the Control Time pass below what to ignore. Fantasy is not always
+  // there - DK posts the tabs as the card fills in - so Takedowns doing this
+  // too means the exclusion still works on a board that has no fantasy yet.
+  out.countdowns = [];
+  const learnCountdowns = (cards) => {
+    for (const c of cards) {
+      if (!c.fighter || !c.clocks.length) continue;
+      // Always refresh the clock itself - a later pass is a fresher reading,
+      // and the Control Time comparison is on proximity.
+      const known = countdown[c.fighter] != null;
+      countdown[c.fighter] = secs(c.clocks[0]);
+      // Report each fighter once, though, however many numbers tabs saw them.
+      if (!known) out.countdowns.push({ fighter: c.fighter, clocks: c.clocks, lines: c.lines });
+    }
+  };
+
   if (await openTab(/fantasy/i, 'number')) {
     const cards = readCards('number');
-    for (const c of cards) {
-      if (c.fighter && c.clocks.length) countdown[c.fighter] = secs(c.clocks[0]);
-    }
+    learnCountdowns(cards);
     out.fantasy = cards.filter(c => c.fighter && c.value != null);
-    out.countdowns = cards
-      .filter(c => c.fighter && c.clocks.length)
-      .map(c => ({ fighter: c.fighter, clocks: c.clocks, lines: c.lines }));
+  }
+
+  if (await openTab(/^takedowns$/i, 'number')) {
+    const cards = readCards('number');
+    learnCountdowns(cards);
+    out.takedowns = cards.filter(c => c.fighter && c.value != null);
   }
 
   if (await openTab(/^time$/i, 'clock')) {
@@ -165,6 +191,9 @@ const MAX_VALUE = {
   'Fantasy Points': 500,
   // Control time cannot exceed the fight: five rounds of five minutes.
   'Control Time': 25 * 60,
+  // Takedown lines sit between 0.5 and about 5.5; 20 is well clear of any of
+  // them and still nowhere near a stray clock or price.
+  'Takedowns': 20,
 };
 
 /**
@@ -214,13 +243,18 @@ function logCountdowns(countdowns) {
   }
 }
 
-async function fetchClickedMarkets() {
+async function fetchClickedMarkets({ expectFantasy }) {
   const out = await evaluateOnPage(URL, BROWSER_SCRIPT, { timeoutMs: 120000 });
   if (!out) throw new Error('no result from page');
-  if (!out.fantasy?.length) {
+  if (expectFantasy && !out.fantasy?.length) {
     // Fantasy is the market this browser trip exists for; if it did not render,
     // treat the whole trip as failed so the poll backs off rather than
     // reporting a half-board.
+    //
+    // Only when a fantasy tab was actually on the board, though. DK posts the
+    // tabs as the card fills in - right now, days out, Pick6 has Significant
+    // Strikes and nothing else - so a trip made for Takedowns alone must not
+    // fail for the absence of a market that has not opened yet.
     throw new Error('fantasy tab produced no values');
   }
   logCountdowns(out.countdowns);
@@ -335,17 +369,20 @@ export async function fetchProps() {
     });
   }
 
-  // Markets that need a click: fantasy, and Control Time behind the Time tab.
-  // One browser trip covers both; anything it returns is emitted here, so the
-  // tab-only placeholder below is only reached for markets nobody asked for.
+  // Markets that need a click: fantasy, Takedowns, and Control Time behind the
+  // Time tab. One browser trip covers all three; anything it returns is emitted
+  // here, so the tab-only placeholder below is only reached for markets nobody
+  // asked for.
   const hasFantasyTab = tabs.some((t) => classify(meta.key, t.label) === 'fantasy');
+  const hasTakedownsTab = tabs.some((t) => /^takedowns$/i.test(t.label));
   const hasTimeTab = tabs.some((t) => /^time$/i.test(t.label));
-  const clicked = { fantasy: null, controlTime: null };
+  const clicked = { fantasy: null, takedowns: null, controlTime: null };
 
-  if ((hasFantasyTab || hasTimeTab) && findBrowser()) {
+  if ((hasFantasyTab || hasTakedownsTab || hasTimeTab) && findBrowser()) {
     try {
-      const got = await fetchClickedMarkets();
+      const got = await fetchClickedMarkets({ expectFantasy: hasFantasyTab });
       clicked.fantasy = got.fantasy;
+      clicked.takedowns = got.takedowns;
       clicked.controlTime = got.controlTime;
     } catch (err) {
       // A transient browser failure must NOT fall through to the tab-only
@@ -375,6 +412,23 @@ export async function fetchProps() {
     });
   }
 
+  for (const card of clicked.takedowns || []) {
+    props.push({
+      book: meta.key,
+      id: `Takedowns:${card.fighter}`,
+      fighter: card.fighter,
+      statLabel: 'Takedowns',
+      statKey: 'Takedowns',
+      // Asked for, so it alerts on a new line and on a move like fantasy does.
+      kind: 'tracked',
+      value: boundedValue('Takedowns', card.value),
+      status: 'open',
+      event: matchupKey(card.fighter, card.opponent),
+      startsAt: null,
+      url: meta.boardUrl,
+    });
+  }
+
   for (const card of clicked.controlTime || []) {
     props.push({
       book: meta.key,
@@ -395,6 +449,7 @@ export async function fetchProps() {
   }
 
   const handled = new Set(['fantasy points']);
+  if (clicked.takedowns?.length) handled.add('takedowns');
   if (clicked.controlTime?.length) handled.add('time');
 
   // A tab with no readable numbers still counts as a market being offered.
