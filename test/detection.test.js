@@ -65,10 +65,13 @@ test('Pick6 "Fantasy Points" tab is fantasy', () => {
   assert.equal(classify('pick6', 'Fantasy Points'), 'fantasy');
 });
 test('Sig Strikes is NOT fantasy', () => {
-  // Watched since it was asked for, but it must never be mistaken for the
-  // fantasy drop - that is the alert the whole watcher exists to catch.
+  // Watched on most books now, but on none of them may it come back 'fantasy'.
+  // That is the drop the whole watcher exists to catch and it must stay clean.
+  for (const book of ['underdog', 'prizepicks', 'betr', 'pick6']) {
+    assert.notEqual(classify(book, 'Significant Strikes'), 'fantasy', book);
+    assert.notEqual(classify(book, 'Sig Strikes'), 'fantasy', book);
+  }
   assert.equal(classify('underdog', 'Significant Strikes'), 'tracked');
-  assert.equal(classify('betr', 'Significant Strikes'), 'known');
 });
 test('Total Rounds is NOT fantasy', () => {
   assert.equal(classify('prizepicks', 'Total Rounds'), 'known');
@@ -332,8 +335,45 @@ test('the attempted markets are not swept up with the ones asked for', () => {
 });
 
 test('watching sig strikes does not leak to the books that did not ask', () => {
-  assert.equal(classify('betr', 'Significant Strikes', 'significant_strikes'), 'known');
   assert.equal(classify('prizepicks', 'Significant Strikes', 'significant_strikes'), 'known');
+  assert.equal(classify('dksportsbook', 'Significant Strikes', 'significant_strikes'), 'unknown');
+});
+
+test('betr sig strikes and takedowns are watched, in betr spelling', () => {
+  // Betr abbreviates the label and shouts the key: "Sig Strikes"/SIG_STRIKES.
+  assert.equal(classify('betr', 'Sig Strikes', null, 'SIG_STRIKES'), 'tracked');
+  assert.equal(classify('betr', 'Significant Strikes', null, 'significant_strikes'), 'tracked');
+  assert.equal(classify('betr', 'Takedowns', null, 'TAKEDOWNS'), 'tracked');
+});
+
+test('betr takedowns are caught under either spelling of the market', () => {
+  // Betr had no takedown market posted when this was written, so the label is
+  // unobserved - its own known list carried both spellings and DK words it
+  // "Takedowns Landed", so both are matched rather than guessing one.
+  assert.equal(classify('betr', 'Takedowns Landed', null, 'TAKEDOWNS_LANDED'), 'tracked');
+});
+
+test('betr attempted markets are not swept in with the ones asked for', () => {
+  // Anchored patterns: the attempted markets are supersets of these words.
+  assert.notEqual(classify('betr', 'Sig Strikes Attempted', null, 'SIG_STRIKES_ATTEMPTED'), 'tracked');
+  assert.notEqual(classify('betr', 'Takedowns Attempted', null, 'TAKEDOWNS_ATTEMPTED'), 'tracked');
+});
+
+test('betr fantasy still outranks the watched markets', () => {
+  assert.equal(classify('betr', 'Fantasy Pts', null, 'FANTASY_POINTS'), 'fantasy');
+});
+
+test('betr ordinary markets stay quiet', () => {
+  for (const [label, key] of [
+    ['Fight Time (Minutes)', 'FIGHT_TIME'],
+    ['Decision Win', 'DECISION_WIN'],
+    ['Finishes', 'FINISHES'],
+    ['Knockdowns', 'KNOCKDOWNS'],
+    ['Control Time', 'CONTROL_TIME'],
+    ['Round of Victory', 'ROUND_OF_VICTORY'],
+  ]) {
+    assert.equal(classify('betr', label, null, key), 'known', label);
+  }
 });
 
 test('pick6 full-fight sig strikes is watched', () => {

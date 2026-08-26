@@ -35,8 +35,14 @@ const KNOWN_NON_FANTASY = {
     'significant strikes attempted',
   ],
   betr: [
-    'sig strikes', 'significant strikes', 'takedowns', 'knockdowns',
-    'fight time', 'sig_strikes', 'takedowns_landed', 'control time',
+    // The strike and takedown spellings are gone from this list for the usual
+    // reason - they are watched now, so a rename should surface as an unknown
+    // stat rather than going quietly known.
+    // No 'attempted' variants listed: unlike the other books, Betr has never
+    // been seen posting one, and inventing a spelling for a market I have not
+    // observed is exactly what the unknown-stat net is meant to catch. If Betr
+    // posts one it surfaces once as a notice, then gets classified for real.
+    'knockdowns', 'fight time', 'control time',
     'fight time (minutes)', '1st rd finish', 'decision win', 'finishes',
     'submissions', 'knockouts', 'round of victory',
   ],
@@ -94,7 +100,12 @@ const KNOCKDOWNS = [/knockdowns?\b/i, /knockdowns?_/i];
 // may be the one that arrives: Underdog sends "Significant Strikes" with
 // significant_strikes, and "Takedowns" with takedowns.
 const FULL_FIGHT_SIG_STRIKES = [/^sig(?:nificant)?[\W_]*strikes$/i];
-const FULL_FIGHT_TAKEDOWNS = [/^takedowns$/i];
+// "Takedowns" on Underdog and Pick6. Betr's own board was dark when this was
+// written and had no takedown market up when it came back, so its spelling is
+// unobserved - its known list carries both 'takedowns' and 'takedowns_landed',
+// and DK words the same market "Takedowns Landed", so accept either. Still
+// anchored, so a Takedowns Attempted market stays out.
+const FULL_FIGHT_TAKEDOWNS = [/^takedowns$/i, /^takedowns[\W_]*landed$/i];
 
 // Pick6 gets strikes but deliberately NOT takedowns, even though both are
 // watched there. Its takedown props are built by the adapter with an explicit
@@ -107,6 +118,7 @@ const WATCHED_PATTERNS = {
   underdog: [...ROUND1_SIG_STRIKES, ...FULL_FIGHT_SIG_STRIKES, ...FULL_FIGHT_TAKEDOWNS],
   prizepicks: [...ROUND1_SIG_STRIKES, ...KNOCKDOWNS],
   pick6: [...FULL_FIGHT_SIG_STRIKES],
+  betr: [...FULL_FIGHT_SIG_STRIKES, ...FULL_FIGHT_TAKEDOWNS],
 };
 
 /**
