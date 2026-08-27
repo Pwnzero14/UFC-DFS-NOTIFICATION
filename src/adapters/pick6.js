@@ -372,7 +372,13 @@ export async function fetchProps() {
       kind: classify(meta.key, selected),
       value: card.value,
       status: 'open',
-      event: card.opponent ? `${card.fighter} ${card.opponent}` : null,
+      // Same canonical matchup the clicked markets use. Built raw from the
+      // fighter's own perspective, this produced a different event name for
+      // each side of a bout - "J. Jenkins vs Woodson" and "S. Woodson vs
+      // Jenkins" - and a third spelling again from the clicked path. One fight
+      // became three events, which fragmented the embed grouping and left an
+      // alert about sixteen props showing two of them.
+      event: matchupKey(card.fighter, card.opponent),
       startsAt: null,
       url: meta.boardUrl,
     });
