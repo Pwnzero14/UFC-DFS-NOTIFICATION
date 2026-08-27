@@ -959,6 +959,29 @@ const titleOf = (kind, props) =>
     {}
   ).content;
 
+test('at most one embed carries the board link', () => {
+  // Discord merges embeds that share a `url` into a single preview. With the
+  // board URL on every one, a twelve-prop alert across seven bouts arrived
+  // showing one embed and two lines - the rest were sent and swallowed.
+  const P = (f, e) => prop({ kind: 'tracked', fighter: f, event: e, value: 50 });
+  const payload = buildDiscordPayload(
+    {
+      kind: 'tracked',
+      bookMeta: { name: 'Pick6', color: 0, boardUrl: 'https://pick6.example' },
+      props: [
+        P('A', 'A vs B'), P('B', 'A vs B'),
+        P('C', 'C vs D'), P('D', 'C vs D'),
+        P('E', 'E vs F'), P('F', 'E vs F'),
+      ],
+    },
+    {}
+  );
+  assert.equal(payload.embeds.length, 3, 'one embed per bout');
+  assert.equal(payload.embeds.filter((e) => e.url).length, 1, 'only one may link');
+  const lines = payload.embeds.reduce((n, e) => n + e.description.split('\n').length, 0);
+  assert.equal(lines, 6, 'every prop still rendered');
+});
+
 test('a takedown market opening is not announced as fantasy', () => {
   const t = titleOf('tracked', [
     prop({ kind: 'tracked', statLabel: 'Takedowns', fighter: 'Denise Gomes', value: 1.5 }),

@@ -108,7 +108,7 @@ export function buildDiscordPayload(alert, cfg) {
           })
           .join('\n'),
         color: bookMeta.color,
-        url: bookMeta.boardUrl,
+        ...(i === 0 ? { url: bookMeta.boardUrl } : {}),
         footer: { text: `${bookMeta.name} • ${props[0]?.statLabel || ''}` },
         timestamp: new Date().toISOString(),
       });
@@ -122,6 +122,14 @@ export function buildDiscordPayload(alert, cfg) {
       allowed_mentions: { parse: ['everyone', 'roles', 'users'] },
     };
   }
+
+  // Discord merges embeds that share a `url` into one - it is the same
+  // mechanism that collapses several images from one link into a single
+  // preview. Every embed here used to carry the same board URL, so a per-event
+  // alert arrived showing only its first fight: twelve sig strikes props across
+  // seven bouts rendered as one embed with two lines. The link is worth keeping
+  // on one embed, so the first one carries it and the rest go without.
+  const linkOn = (i) => (i === 0 ? { url: bookMeta.boardUrl } : {});
 
   const embeds = [];
   for (const [event, list] of groups) {
@@ -141,7 +149,7 @@ export function buildDiscordPayload(alert, cfg) {
       title: event,
       description: lines.join('\n') || '_no readable lines yet_',
       color: bookMeta.color,
-      url: bookMeta.boardUrl,
+      ...linkOn(embeds.length),
       fields: when ? [{ name: 'Starts', value: when, inline: true }] : [],
       footer: { text: `${bookMeta.name} • ${list.length} prop(s)` },
       timestamp: new Date().toISOString(),
