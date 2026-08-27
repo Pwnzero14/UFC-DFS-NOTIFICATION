@@ -7,6 +7,7 @@ import { loadConfig, inQuietHours, ROOT } from './config.js';
 import * as store from './state.js';
 import * as lock from './lock.js';
 import { teeConsoleTo } from './logfile.js';
+import { blackoutSince } from './blackout.js';
 import * as notify from './notify.js';
 import { HttpError } from './http.js';
 
@@ -225,7 +226,31 @@ async function maybeHeartbeat(state, cfg, force = false) {
   }
 }
 
+// ------------------------------------------------------------------ blackout
+
+// Wall clock at the top of the previous cycle. In memory on purpose: sleeping
+// the machine suspends this process rather than killing it, so the gap that
+// matters most is invisible to anything persisted.
+let lastCycleAt = null;
+
+async function reportBlackout(gap, cfg) {
+  const spent = notify.humanDuration(gap.ms);
+  console.log(`[${ts()}] watcher was dark for ${spent} - alerts below may be late`);
+  if (!cfg.discord?.webhookUrl) return;
+  try {
+    await notify.sendDiscord(cfg.discord.webhookUrl, notify.buildBlackoutPayload(cfg, gap));
+  } catch (err) {
+    // Never let a status post cost us the catch-up poll behind it.
+    console.log(`[${ts()}] blackout notice failed: ${err.message.slice(0, 100)}`);
+  }
+}
+
 async function runCycle(state, cfg, force = false) {
+  // Before polling, so the notice lands ahead of the alerts it explains.
+  const gap = blackoutSince(lastCycleAt, state.lastRun);
+  if (gap) await reportBlackout(gap, cfg);
+  lastCycleAt = Date.now();
+
   for (const adapter of activeAdapters(cfg)) {
     if (force || due(adapter)) await pollOne(adapter, state, cfg);
   }

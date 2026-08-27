@@ -209,6 +209,49 @@ export function buildHeartbeatPayload(state, cfg, books, uptimeMs) {
   };
 }
 
+/** "10h 51m", "43m", "12m" - no bogus "0h" on a short gap. */
+export function humanDuration(ms) {
+  const mins = Math.round(ms / 60_000);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+/**
+ * "The watcher was not running for a while" notice.
+ *
+ * Alerts are not lost across a blackout - on the next poll the diff still sees
+ * the change and fires - so the damage is not silence, it is staleness. A drop
+ * that happened while the machine slept arrives whenever it wakes, looking
+ * exactly like a drop that just happened. This posts first so the catch-up
+ * alerts behind it have context: the line has been live a while, and the number
+ * may well have moved again since.
+ *
+ * Never pings, same as the heartbeat - by the time this can be read the machine
+ * is awake and its owner is in front of it.
+ */
+export function buildBlackoutPayload(cfg, { from, to, ms }) {
+  const stamp = (t) => `<t:${Math.floor(t / 1000)}:t>`;
+  return {
+    username: cfg.discord?.username || 'UFC Fantasy Alerts',
+    content: `🌙 Watcher was dark for ${humanDuration(ms)}`,
+    embeds: [
+      {
+        title: 'Anything below may be late',
+        description:
+          `No polling between ${stamp(from)} and ${stamp(to)}.\n` +
+          'Lines that moved in that window are detected on the next poll, so ' +
+          'any alert that follows this is real but may be stale - check the ' +
+          'board before acting on it.',
+        color: 0x9b59b6,
+        footer: { text: 'usually means the machine slept - locking is fine, sleeping is not' },
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    allowed_mentions: { parse: [] },
+  };
+}
+
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**

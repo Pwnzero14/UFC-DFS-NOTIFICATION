@@ -4,7 +4,14 @@
 import assert from 'node:assert/strict';
 import * as store from '../src/state.js';
 import { classify } from '../src/fantasy.js';
-import { buildDiscordPayload, moveDelta, buildHeartbeatPayload } from '../src/notify.js';
+import { blackoutSince } from '../src/blackout.js';
+import {
+  buildDiscordPayload,
+  moveDelta,
+  buildHeartbeatPayload,
+  buildBlackoutPayload,
+  humanDuration,
+} from '../src/notify.js';
 import { BROWSER_SCRIPT, boundedValue } from '../src/adapters/pick6.js';
 
 let passed = 0;
@@ -848,6 +855,93 @@ test('a nulled value cannot raise a line move in either direction', () => {
   store.commit(state, 'pick6', store.diff(state, 'pick6', p(null)).fresh);
   assert.equal(store.diff(state, 'pick6', p(93.5)).moved.length, 0);
   assert.equal(store.diff(state, 'pick6', p(93.5)).newProps.length, 0);
+});
+
+// ------------------------------------------------------------- blackouts
+//
+// Sleeping the laptop suspends the watcher without killing it. Over four days
+// that cost ~45% of uptime, in stretches up to 10h51m, and on wake it just
+// resumed - nothing marked the catch-up alerts as hours stale.
+
+const T0 = Date.parse('2026-08-25T07:28:32Z'); // the real 10h51m sleep
+const WOKE = Date.parse('2026-08-25T18:19:14Z');
+
+test('the August 25 sleep would have been caught', () => {
+  const gap = blackoutSince(T0, null, WOKE);
+  assert.ok(gap);
+  assert.equal(humanDuration(gap.ms), '10h 51m');
+});
+
+test('an ordinary cycle is not a blackout', () => {
+  assert.equal(blackoutSince(WOKE - 5_000, null, WOKE), null);
+  // Pick6's browser trip plus DK's page is the slowest honest cycle there is.
+  assert.equal(blackoutSince(WOKE - 4 * 60_000, null, WOKE), null);
+});
+
+test('the very first run ever reports nothing missed', () => {
+  assert.equal(blackoutSince(null, null, WOKE), null);
+  assert.equal(blackoutSince(null, undefined, WOKE), null);
+});
+
+test('an unparseable lastRun is not treated as an infinite blackout', () => {
+  // Date.parse of junk is NaN, and NaN comparisons are false - easy to get
+  // wrong in a way that reports a gap since the epoch.
+  assert.equal(blackoutSince(null, 'not a date', WOKE), null);
+});
+
+test('a restart falls back to the persisted stamp', () => {
+  // Nothing in memory yet, so state.lastRun is the only evidence. This is the
+  // reboot and crash case; sleep is covered by memory.
+  const gap = blackoutSince(null, new Date(T0).toISOString(), WOKE);
+  assert.ok(gap);
+  assert.equal(humanDuration(gap.ms), '10h 51m');
+});
+
+test('a deliberate restart is not reported as a blackout', () => {
+  // The user restarts the task constantly to deploy - that must stay silent.
+  assert.equal(blackoutSince(null, new Date(WOKE - 20_000).toISOString(), WOKE), null);
+});
+
+test('memory wins over the persisted stamp after a sleep', () => {
+  // state.lastRun was written before the machine went under, so it is older
+  // and would overstate the gap. The in-memory cycle time is the truth.
+  const stale = new Date(T0 - 6 * 3_600_000).toISOString();
+  const gap = blackoutSince(T0, stale, WOKE);
+  assert.equal(humanDuration(gap.ms), '10h 51m'); // not 16h51m
+});
+
+test('a clock that jumps backwards is not a blackout', () => {
+  // DST or an NTP correction can make now earlier than the last cycle.
+  assert.equal(blackoutSince(WOKE + 3_600_000, null, WOKE), null);
+});
+
+test('a blackout is reported in hours and minutes', () => {
+  // The real one: 2026-08-25 03:28 -> 14:19.
+  assert.equal(humanDuration(10 * 3_600_000 + 51 * 60_000), '10h 51m');
+});
+
+test('a short blackout does not claim a bogus 0h', () => {
+  assert.equal(humanDuration(43 * 60_000), '43m');
+  assert.doesNotMatch(humanDuration(43 * 60_000), /0h/);
+});
+
+test('the blackout notice says how long and that alerts may be stale', () => {
+  const now = Date.now();
+  const p = buildBlackoutPayload({}, { from: now - 39_060_000, to: now, ms: 39_060_000 });
+  assert.match(p.content, /10h 51m/);
+  assert.match(p.embeds[0].description + p.embeds[0].title, /late|stale/i);
+});
+
+test('a blackout notice can never ping', () => {
+  // Same rule as the heartbeat: this is status, and it is read at a keyboard.
+  const now = Date.now();
+  const p = buildBlackoutPayload(
+    { discord: { mention: '@everyone', mentionOnLineMove: true } },
+    { from: now - 39_060_000, to: now, ms: 39_060_000 }
+  );
+  assert.deepEqual(p.allowed_mentions, { parse: [] });
+  assert.doesNotMatch(p.content, /@everyone/);
+  assert.doesNotMatch(JSON.stringify(p.embeds), /@everyone/);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);
