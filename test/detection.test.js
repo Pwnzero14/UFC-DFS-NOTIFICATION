@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import * as store from '../src/state.js';
 import { classify } from '../src/fantasy.js';
 import { blackoutSince } from '../src/blackout.js';
+import { buildAlerts } from '../src/alerts.js';
 import {
   buildDiscordPayload,
   moveDelta,
@@ -942,6 +943,86 @@ test('a blackout notice can never ping', () => {
   assert.deepEqual(p.allowed_mentions, { parse: [] });
   assert.doesNotMatch(p.content, /@everyone/);
   assert.doesNotMatch(JSON.stringify(p.embeds), /@everyone/);
+});
+
+// ------------------------------------------ telling the markets apart
+//
+// Every watched market used to share one bucket with fantasy, so the headline
+// named whichever family the payload noticed first. A takedown line really did
+// post as "UFC FANTASY PROPS ARE UP", and a sig strikes move as "fantasy line
+// moves". On Saturday a real drop and a takedown opening can land in the same
+// poll, and they have to be distinguishable at a glance.
+
+const titleOf = (kind, props) =>
+  buildDiscordPayload(
+    { kind, bookMeta: { name: 'Betr', color: 0, boardUrl: 'https://x' }, props },
+    {}
+  ).content;
+
+test('a takedown market opening is not announced as fantasy', () => {
+  const t = titleOf('tracked', [
+    prop({ kind: 'tracked', statLabel: 'Takedowns', fighter: 'Denise Gomes', value: 1.5 }),
+  ]);
+  assert.match(t, /TAKEDOWNS ARE UP/);
+  assert.doesNotMatch(t, /FANTASY/i);
+});
+
+test('the fantasy drop still announces as fantasy', () => {
+  const t = titleOf('fantasy', [fantasyProp()]);
+  assert.match(t, /FANTASY PROPS ARE UP/);
+});
+
+test('a watched market opening pings like the drop does', () => {
+  // It is still a market opening, and the whole point of watching it is to be
+  // told when it appears - it just gets called by its own name.
+  const p = buildDiscordPayload(
+    {
+      kind: 'tracked',
+      bookMeta: { name: 'Betr', color: 0, boardUrl: 'https://x' },
+      props: [prop({ kind: 'tracked', statLabel: 'Takedowns', value: 1.5 })],
+    },
+    { discord: { mention: '@everyone' } }
+  );
+  assert.match(p.content, /@everyone/);
+});
+
+test('a sig strikes move is not titled a fantasy move', () => {
+  const t = titleOf('move', [
+    prop({ kind: 'tracked', statLabel: 'Sig Strikes', value: 42.5, previousValue: 45.5 }),
+  ]);
+  assert.match(t, /sig strikes line move/);
+  assert.doesNotMatch(t, /fantasy/i);
+});
+
+test('a fantasy move is still titled a fantasy move', () => {
+  const t = titleOf('move', [fantasyProp({ value: 99.5, previousValue: 94.5 })]);
+  assert.match(t, /fantasy line move/);
+});
+
+test('a mixed batch is never built in the first place', () => {
+  // The split happens upstream in buildAlerts, so the payload never has to
+  // guess. This pins the guarantee the naming depends on.
+  const result = {
+    newProps: [
+      fantasyProp({ fighter: 'Umar' }),
+      prop({ kind: 'tracked', statLabel: 'Takedowns', fighter: 'Gomes', value: 1.5 }),
+    ],
+    moved: [
+      fantasyProp({ fighter: 'Tsuruya', value: 99.5, previousValue: 94.5 }),
+      prop({ kind: 'tracked', statLabel: 'Sig Strikes', fighter: 'Hasan', value: 42.5, previousValue: 45.5 }),
+    ],
+  };
+  const alerts = buildAlerts(
+    { meta: { key: 'betr', name: 'Betr' } },
+    result,
+    { alertOnFantasy: true, alertOnLineMove: true, lineMoveMinDelta: 0 },
+    false
+  );
+  for (const a of alerts) {
+    const kinds = new Set(a.props.map((p) => p.kind));
+    assert.equal(kinds.size, 1, `alert "${a.kind}" mixed families: ${[...kinds]}`);
+  }
+  assert.equal(alerts.length, 4, 'two openings and two moves, split by family');
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);

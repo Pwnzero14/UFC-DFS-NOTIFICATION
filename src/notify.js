@@ -50,10 +50,16 @@ export function moveDelta(from, to, unit) {
 
 export function buildDiscordPayload(alert, cfg) {
   const { bookMeta, kind, props } = alert;
-  const isFantasy = kind === 'fantasy';
+  // A market opening is a drop whether it is fantasy or one of the markets we
+  // asked to watch. Both are worth the same siren and the same mention; they
+  // differ only in what they get called.
+  const isDrop = kind === 'fantasy' || kind === 'tracked';
   const isMove = kind === 'move';
 
-  // Name the actual market: "FANTASY PROPS" is wrong for a sportsbook O/U.
+  // Name the actual market: "FANTASY PROPS" is wrong for a sportsbook O/U, and
+  // wrong for a takedown line. Alerts arrive split by market family, so these
+  // describe what is genuinely in this batch rather than guessing at whichever
+  // family happened to come first.
   const stats = [...new Set(props.map((p) => p.statLabel).filter(Boolean))];
   const anyFantasy = stats.some((s) => /fantasy/i.test(s));
   const marketName = anyFantasy
@@ -63,11 +69,17 @@ export function buildDiscordPayload(alert, cfg) {
       : stats.length === 2
         ? stats.map((s) => s.toUpperCase()).join(' & ')
         : 'PROPS';
+  // "FANTASY PROPS line moves" reads badly, and so does shouting mid-sentence.
+  const movedMarket = anyFantasy
+    ? 'fantasy'
+    : stats.length && stats.length <= 2
+      ? stats.join(' & ').toLowerCase()
+      : '';
 
-  const title = isFantasy
+  const title = isDrop
     ? `🚨 ${bookMeta.name} — UFC ${marketName} ARE UP`
     : isMove
-      ? `📈 ${bookMeta.name} — ${anyFantasy ? 'fantasy ' : ''}line ${props.length === 1 ? 'move' : 'moves'}`
+      ? `📈 ${bookMeta.name} — ${movedMarket ? `${movedMarket} ` : ''}line ${props.length === 1 ? 'move' : 'moves'}`
       : `👀 ${bookMeta.name} — new UFC market: ${props[0]?.statLabel}`;
 
   const groups = groupByEvent(props);
@@ -102,7 +114,7 @@ export function buildDiscordPayload(alert, cfg) {
       });
     }
     const mention = cfg.discord?.mention || '';
-    const ping = isFantasy || (isMove && cfg.discord?.mentionOnLineMove === true);
+    const ping = isDrop || (isMove && cfg.discord?.mentionOnLineMove === true);
     return {
       username: cfg.discord?.username || 'UFC Fantasy Alerts',
       content: ping && mention ? `${mention} ${title}`.trim() : title,
@@ -141,7 +153,7 @@ export function buildDiscordPayload(alert, cfg) {
   // an @everyone on every half-point wiggle just gets the channel muted.
   const mention = cfg.discord?.mention || '';
   const shouldPing =
-    isFantasy || (isMove && cfg.discord?.mentionOnLineMove === true);
+    isDrop || (isMove && cfg.discord?.mentionOnLineMove === true);
 
   return {
     username: cfg.discord?.username || 'UFC Fantasy Alerts',
@@ -346,6 +358,8 @@ $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}' + [char]92 + 'WindowsPowerShel
 
 const TAGS = {
   fantasy: '\x1b[42m\x1b[30m FANTASY \x1b[0m',
+  // A watched market opening is a drop too, just not the one being waited for.
+  tracked: '\x1b[45m\x1b[30m MARKET  \x1b[0m',
   move: '\x1b[46m\x1b[30m  MOVE   \x1b[0m',
   unknown: '\x1b[43m\x1b[30m NEW STAT \x1b[0m',
 };

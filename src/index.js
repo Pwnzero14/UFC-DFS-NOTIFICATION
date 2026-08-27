@@ -8,6 +8,7 @@ import * as store from './state.js';
 import * as lock from './lock.js';
 import { teeConsoleTo } from './logfile.js';
 import { blackoutSince } from './blackout.js';
+import { buildAlerts } from './alerts.js';
 import * as notify from './notify.js';
 import { HttpError } from './http.js';
 
@@ -86,32 +87,6 @@ async function dispatch(alert, cfg) {
   }
 }
 
-function buildAlerts(adapter, result, cfg, firstRun) {
-  const alerts = [];
-  const push = (kind, props) => {
-    if (props.length) alerts.push({ kind, bookMeta: adapter.meta, props });
-  };
-
-  if (firstRun && !cfg.alertOnFirstRun) return alerts;
-
-  if (cfg.alertOnFantasy) {
-    push('fantasy', result.newProps.filter((p) => store.ALERTING_KINDS.has(p.kind)));
-  }
-  if (cfg.alertOnUnknownStat) {
-    push('unknown', result.newProps.filter((p) => p.kind === 'unknown'));
-  }
-  if (cfg.alertOnLineMove) {
-    // A threshold of 0 means "tell me about any move at all".
-    const min = Number(cfg.lineMoveMinDelta) || 0;
-    push(
-      'move',
-      result.moved.filter(
-        (p) => Math.abs(Number(p.value) - Number(p.previousValue)) >= min
-      )
-    );
-  }
-  return alerts;
-}
 
 // ------------------------------------------------------------------ poll loop
 
