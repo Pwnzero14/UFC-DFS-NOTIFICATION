@@ -244,7 +244,16 @@ function logCountdowns(countdowns) {
 }
 
 async function fetchClickedMarkets({ expectFantasy }) {
-  const out = await evaluateOnPage(URL, BROWSER_SCRIPT, { timeoutMs: 120000 });
+  // Stealth is not optional here any more. On 2026-08-27, the day the fantasy
+  // tab went up, DK put Pick6 behind the same Akamai protection the Sportsbook
+  // has always needed: plain headless Chrome gets an "Access Denied" page from
+  // errors.edgesuite.net, with no tabs and no cards, while the ordinary HTTP
+  // fetch above still succeeds. That split is what made it look like a parsing
+  // fault rather than a block.
+  const out = await evaluateOnPage(URL, BROWSER_SCRIPT, {
+    timeoutMs: 120000,
+    stealth: true,
+  });
   if (!out) throw new Error('no result from page');
   if (expectFantasy && !out.fantasy?.length) {
     // Fantasy is the market this browser trip exists for; if it did not render,
