@@ -342,8 +342,19 @@ test('the attempted markets are not swept up with the ones asked for', () => {
   );
 });
 
-test('watching sig strikes does not leak to the books that did not ask', () => {
-  assert.equal(classify('prizepicks', 'Significant Strikes', 'significant_strikes'), 'known');
+test('every DFS book watches sig strikes, in its own spelling', () => {
+  // All four ask for it now; each writes it differently, and the anchored
+  // pattern has to cover every spelling without reaching the attempted market.
+  for (const [book, label, key] of [
+    ['underdog', 'Significant Strikes', 'significant_strikes'],
+    ['prizepicks', 'Significant Strikes', 'Significant Strikes'],
+    ['betr', 'Sig Strikes', 'SIG_STRIKES'],
+    ['pick6', 'Significant Strikes', 'significant_strikes'],
+  ]) {
+    assert.equal(classify(book, label, null, key), 'tracked', book);
+    assert.notEqual(classify(book, `${label} Attempted`), 'tracked', `${book} attempted`);
+  }
+  // The Sportsbook builds its own kinds and never consults the classifier.
   assert.equal(classify('dksportsbook', 'Significant Strikes', 'significant_strikes'), 'unknown');
 });
 
@@ -422,10 +433,24 @@ test('PrizePicks round 1 is watched too, in either word order', () => {
 });
 
 test('PrizePicks ordinary markets stay quiet', () => {
-  for (const label of ['Total Rounds', 'Significant Strikes', 'Fight Time (Mins)', 'Takedowns']) {
+  for (const label of [
+    'Total Rounds',
+    'Fight Time (Mins)',
+    'Submission Attempts',
+    'Control Time',
+    'Significant Strikes Attempted',
+  ]) {
     assert.notEqual(classify('prizepicks', label), 'tracked', label);
   }
   assert.equal(classify('prizepicks', 'Fantasy Score'), 'fantasy');
+});
+
+test('PrizePicks full-fight sig strikes and takedowns are watched', () => {
+  assert.equal(classify('prizepicks', 'Significant Strikes', 'Significant Strikes'), 'tracked');
+  assert.equal(classify('prizepicks', 'Takedowns', 'Takedowns'), 'tracked');
+  // Its round-scoped and knockdown markets keep working alongside them.
+  assert.equal(classify('prizepicks', 'RD 1 Significant Strikes'), 'tracked');
+  assert.equal(classify('prizepicks', 'Knockdowns'), 'tracked');
 });
 
 test('Underdog round-scoped finish markets stay quiet as a family', () => {

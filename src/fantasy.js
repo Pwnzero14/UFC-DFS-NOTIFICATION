@@ -28,9 +28,12 @@ const KNOWN_NON_FANTASY = {
     '4th round finish', '5th round finish',
   ],
   prizepicks: [
-    'fight time (mins)', 'total rounds', 'significant strikes', 'takedowns',
-    // 'knockdowns' deliberately NOT listed here - it is a watched market now,
-    // and a watched match is checked before this list anyway.
+    // 'knockdowns', 'significant strikes' and 'takedowns' deliberately NOT
+    // listed - all three are watched markets now, and a watched match is
+    // checked before this list anyway. Leaving them out means a renamed
+    // variant surfaces as an unknown stat rather than going quietly known.
+    // 'significant strikes attempted' stays: it is a different market.
+    'fight time (mins)', 'total rounds',
     'submission attempts', 'control time', 'fight time',
     'significant strikes attempted',
   ],
@@ -116,7 +119,12 @@ const FULL_FIGHT_TAKEDOWNS = [/^takedowns$/i, /^takedowns[\W_]*landed$/i];
 // Left unwatched here, it stays quiet and the real prop is still tracked.
 const WATCHED_PATTERNS = {
   underdog: [...ROUND1_SIG_STRIKES, ...FULL_FIGHT_SIG_STRIKES, ...FULL_FIGHT_TAKEDOWNS],
-  prizepicks: [...ROUND1_SIG_STRIKES, ...KNOCKDOWNS],
+  prizepicks: [
+    ...ROUND1_SIG_STRIKES,
+    ...KNOCKDOWNS,
+    ...FULL_FIGHT_SIG_STRIKES,
+    ...FULL_FIGHT_TAKEDOWNS,
+  ],
   pick6: [...FULL_FIGHT_SIG_STRIKES],
   betr: [...FULL_FIGHT_SIG_STRIKES, ...FULL_FIGHT_TAKEDOWNS],
 };
