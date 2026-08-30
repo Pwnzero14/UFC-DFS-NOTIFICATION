@@ -9,6 +9,16 @@
 import { getJson } from '../http.js';
 import { classify } from '../fantasy.js';
 
+/** Anything that is not the plain pick'em line: demon, goblin, and whatever
+ *  PrizePicks names next. Absent odds_type means the standard offer. */
+export const isAlternate = (oddsType) =>
+  !!oddsType && !/^standard$/i.test(String(oddsType).trim());
+
+/** Quiet an alternate line without hiding it. Fantasy is left alone so a drop
+ *  can never be missed on a variant technicality; only watched markets and
+ *  never-seen stats are silenced, and 'known' is already the quiet kind. */
+export const demoteToKnown = (kind) => (kind === 'fantasy' ? kind : 'known');
+
 const UFC_LEAGUE_ID = '12';
 const URL = `https://partner-api.prizepicks.com/projections?league_id=${UFC_LEAGUE_ID}`;
 
@@ -60,7 +70,17 @@ export async function fetchProps() {
       // demon/goblin are separate offers on the same stat; game_id keeps
       // re-posted boards for the same matchup apart.
       variant: [a.odds_type, a.game_id].filter(Boolean).join(':') || null,
-      kind: classify(meta.key, label, a.stat_type),
+      // Demon and goblin are alternate lines on the same stat, priced away
+      // from the middle. The standard offer is the pick'em-value line and the
+      // only one worth alerting on: tracking all three means one fighter's
+      // strikes line is three props that move independently, on the book with
+      // the largest board of the five. The alternates are still reported, so
+      // they stay visible and countable - they just classify known and keep
+      // quiet. Fantasy is deliberately exempt: the drop is the alert this all
+      // exists for, and it is not worth risking on a variant assumption.
+      kind: isAlternate(a.odds_type)
+        ? demoteToKnown(classify(meta.key, label, a.stat_type))
+        : classify(meta.key, label, a.stat_type),
       value: a.line_score == null ? null : Number(a.line_score),
       status: a.status,
       event,

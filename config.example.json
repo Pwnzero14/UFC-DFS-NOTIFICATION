@@ -26,5 +26,13 @@
   "heartbeat": {
     "enabled": true,
     "everyHours": 12
+  },
+  "lineMoveThresholds": {
+    "fantasy": 0,
+    "significant strikes": 2,
+    "round 1 significant strikes": 1,
+    "takedowns": 0,
+    "knockdowns": 0,
+    "control time": 30
   }
 }

@@ -175,6 +175,49 @@ export function isKnownStat(book, label) {
  * -> 'known'    : an ordinary non-fantasy prop, ignore
  * -> 'unknown'  : never seen before; worth a heads-up (safety net)
  */
+// One name per market, across five books that each spell them differently:
+// "Sig Strikes" and SIG_STRIKES and significant_strikes are one thing, and a
+// move threshold set for it should apply to all three. Anything unrecognised
+// falls back to its own label, so a market nobody has named yet can still be
+// given a threshold by writing that label in the config.
+//
+// Order matters: round-scoped strikes are checked before full-fight ones, so
+// "RD 1 Significant Strikes" cannot be filed under plain significant strikes.
+const MARKET_NAMES = [
+  ['fantasy', FANTASY_PATTERNS],
+  ['round 1 significant strikes', ROUND1_SIG_STRIKES],
+  ['significant strikes', FULL_FIGHT_SIG_STRIKES],
+  ['takedowns', FULL_FIGHT_TAKEDOWNS],
+  ['knockdowns', KNOCKDOWNS],
+  ['control time', [/^control[\W_]*time$/i]],
+];
+
+/**
+ * Canonical market name for a prop, for looking up per-market settings.
+ * Independent of `classify` on purpose: a market keeps its name whether or not
+ * this book happens to watch it.
+ */
+export function marketKey(...labels) {
+  // The Sportsbook suffixes every label with the bet type - "Takedowns Landed
+  // O/U". That is the same market as a DFS takedown line, so it should answer
+  // to the same name and share its threshold.
+  const present = labels
+    .filter(Boolean)
+    .map((l) => String(l).replace(/\s*o\s*\/\s*u\s*$/i, '').trim())
+    .filter(Boolean);
+  // Label-major, not pattern-major. The display label is the authoritative
+  // name and the stat key is only a fallback for when it is missing or
+  // unhelpful; asking every pattern about every label at once lets a stale or
+  // generic key outvote the label in front of it, which is how a Control Time
+  // prop can come back named "significant strikes".
+  for (const label of present) {
+    for (const [name, patterns] of MARKET_NAMES) {
+      if (patterns.some((re) => re.test(label))) return name;
+    }
+  }
+  return String(present[0] || '').trim().toLowerCase();
+}
+
 export function classify(book, ...labels) {
   if (isFantasyStat(...labels)) return 'fantasy';
   if (isWatchedStat(book, ...labels)) return 'tracked';

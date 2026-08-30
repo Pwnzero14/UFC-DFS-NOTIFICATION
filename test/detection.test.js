@@ -3,9 +3,10 @@
 
 import assert from 'node:assert/strict';
 import * as store from '../src/state.js';
-import { classify } from '../src/fantasy.js';
+import { classify, marketKey } from '../src/fantasy.js';
 import { blackoutSince } from '../src/blackout.js';
-import { buildAlerts } from '../src/alerts.js';
+import { buildAlerts, moveThreshold } from '../src/alerts.js';
+import { isAlternate, demoteToKnown } from '../src/adapters/prizepicks.js';
 import {
   buildDiscordPayload,
   moveDelta,
@@ -1057,7 +1058,7 @@ test('a mixed batch is never built in the first place', () => {
     ],
     moved: [
       fantasyProp({ fighter: 'Tsuruya', value: 99.5, previousValue: 94.5 }),
-      prop({ kind: 'tracked', statLabel: 'Sig Strikes', fighter: 'Hasan', value: 42.5, previousValue: 45.5 }),
+      prop({ kind: 'tracked', statLabel: 'Sig Strikes', statKey: 'SIG_STRIKES', fighter: 'Hasan', value: 42.5, previousValue: 45.5 }),
     ],
   };
   const alerts = buildAlerts(
@@ -1071,6 +1072,99 @@ test('a mixed batch is never built in the first place', () => {
     assert.equal(kinds.size, 1, `alert "${a.kind}" mixed families: ${[...kinds]}`);
   }
   assert.equal(alerts.length, 4, 'two openings and two moves, split by family');
+});
+
+// ------------------------------------------------- per-market thresholds
+
+test('one market answers to one name across all five books', () => {
+  // A threshold set for significant strikes has to apply to every spelling of
+  // it, or three of the four books quietly keep the global default.
+  for (const [label, key] of [
+    ['Significant Strikes', 'significant_strikes'],
+    ['Sig Strikes', 'SIG_STRIKES'],
+    ['Significant Strikes O/U', null],
+  ]) {
+    assert.equal(marketKey(label, key), 'significant strikes', label);
+  }
+  for (const [label, key] of [
+    ['Takedowns', 'TAKEDOWNS'],
+    ['Takedowns Landed', 'TAKEDOWNS_LANDED'],
+    ['Takedowns Landed O/U', null],
+  ]) {
+    assert.equal(marketKey(label, key), 'takedowns', label);
+  }
+  for (const label of ['Fantasy Points', 'Fantasy Pts', 'Fantasy Score']) {
+    assert.equal(marketKey(label), 'fantasy', label);
+  }
+});
+
+test('round-scoped strikes keep their own name', () => {
+  // Checked before full-fight strikes, or the round 1 market inherits a
+  // threshold meant for a line that moves on a completely different scale.
+  assert.equal(marketKey('RD 1 Significant Strikes'), 'round 1 significant strikes');
+  assert.equal(marketKey('Round 1 Significant Strikes O/U'), 'round 1 significant strikes');
+});
+
+test('an unnamed market can still be given a threshold by its label', () => {
+  assert.equal(marketKey('Total Rounds'), 'total rounds');
+  assert.equal(marketKey('Significant Strikes Attempted'), 'significant strikes attempted');
+});
+
+const THRESHOLDS = {
+  lineMoveMinDelta: 0,
+  lineMoveThresholds: { fantasy: 0, 'significant strikes': 2, 'control time': 30 },
+};
+
+test('a market with no threshold of its own falls back to the global one', () => {
+  assert.equal(moveThreshold({ statLabel: 'Takedowns' }, THRESHOLDS), 0);
+  assert.equal(
+    moveThreshold({ statLabel: 'Takedowns' }, { ...THRESHOLDS, lineMoveMinDelta: 5 }),
+    5
+  );
+});
+
+test('a threshold of zero is honoured, not treated as unset', () => {
+  // `||` here would turn an explicit 0 into the global default - the exact
+  // shape of bug that silently changes what you get told about.
+  const cfg = { lineMoveMinDelta: 9, lineMoveThresholds: { fantasy: 0 } };
+  assert.equal(moveThreshold({ statLabel: 'Fantasy Points' }, cfg), 0);
+});
+
+test('thresholds gate moves per market, in that market s own units', () => {
+  const moved = [
+    // Fantasy: threshold 0, so a one-point move still reports.
+    fantasyProp({ fighter: 'Umar', value: 101.5, previousValue: 100.5 }),
+    // Sig strikes: threshold 2, so a one-point wiggle does not.
+    prop({ kind: 'tracked', statLabel: 'Sig Strikes', statKey: 'SIG_STRIKES', fighter: 'Hasan', value: 44.5, previousValue: 45.5 }),
+    // ...but a three-point move does.
+    prop({ kind: 'tracked', statLabel: 'Sig Strikes', statKey: 'SIG_STRIKES', fighter: 'Lima', value: 40.5, previousValue: 37.5 }),
+    // Control time is seconds: 20s is under its 30s bar.
+    prop({ kind: 'tracked', statLabel: 'Control Time', statKey: 'Control Time', fighter: 'Jenkins', value: 150, previousValue: 170, unit: 'time' }),
+  ];
+  const alerts = buildAlerts(
+    { meta: { key: 'betr', name: 'Betr' } },
+    { newProps: [], moved },
+    { ...THRESHOLDS, alertOnLineMove: true },
+    false
+  );
+  const reported = alerts.flatMap((a) => a.props.map((p) => p.fighter));
+  assert.deepEqual(reported.sort(), ['Lima', 'Umar']);
+});
+
+// --------------------------------------- PrizePicks alternate lines
+
+test('demon and goblin lines are reported but stay quiet', () => {
+  assert.equal(isAlternate('demon'), true);
+  assert.equal(isAlternate('goblin'), true);
+  assert.equal(isAlternate('standard'), false);
+  assert.equal(isAlternate(null), false, 'no odds_type means the standard offer');
+  assert.equal(demoteToKnown('tracked'), 'known');
+});
+
+test('the fantasy drop is never silenced by a variant', () => {
+  // The alert this whole thing exists for does not get gated on an assumption
+  // about which variants PrizePicks happens to post.
+  assert.equal(demoteToKnown('fantasy'), 'fantasy');
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);

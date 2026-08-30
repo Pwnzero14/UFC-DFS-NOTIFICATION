@@ -8,6 +8,25 @@
 // honestly instead of guessing at it.
 
 import { ALERTING_KINDS } from './state.js';
+import { marketKey } from './fantasy.js';
+
+/**
+ * How far a line must move before it is worth saying so, for this prop.
+ *
+ * One global threshold could not serve five books at once. Fantasy points move
+ * in ones and every move matters; significant strikes wander half a point
+ * constantly across four books now; control time is stored in seconds, so any
+ * number tuned for a fantasy line is meaningless against it. Thresholds are
+ * read per market, in that market's own units, and fall back to the global
+ * lineMoveMinDelta for anything unlisted.
+ */
+export function moveThreshold(prop, cfg) {
+  const perMarket = cfg.lineMoveThresholds || {};
+  const key = marketKey(prop.statLabel, prop.statKey);
+  const specific = perMarket[key];
+  const value = Number(specific ?? cfg.lineMoveMinDelta);
+  return Number.isFinite(value) ? value : 0;
+}
 
 /** Fantasy first, then everything else we watch. Never mixed. */
 function byFamily(props) {
@@ -38,9 +57,9 @@ export function buildAlerts(adapter, result, cfg, firstRun) {
   }
   if (cfg.alertOnLineMove) {
     // A threshold of 0 means "tell me about any move at all".
-    const min = Number(cfg.lineMoveMinDelta) || 0;
     const moved = result.moved.filter(
-      (p) => Math.abs(Number(p.value) - Number(p.previousValue)) >= min
+      (p) =>
+        Math.abs(Number(p.value) - Number(p.previousValue)) >= moveThreshold(p, cfg)
     );
     for (const family of byFamily(moved)) push('move', family);
   }
