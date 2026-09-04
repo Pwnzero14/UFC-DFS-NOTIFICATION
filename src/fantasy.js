@@ -138,6 +138,22 @@ const WATCHED_PATTERNS = {
  * would also swallow Significant Strikes Attempted - a different line that
  * every board offers. Per-label, `^significant strikes$` means what it says.
  */
+/**
+ * Quiet an alternate line without hiding it.
+ *
+ * Books post alternate lines beside the standard pick'em offer - PrizePicks
+ * calls them demon and goblin, Underdog just posts a second line at a different
+ * number. They are priced away from the middle and are not what anyone is
+ * watching, so they report but do not alert.
+ *
+ * Fantasy is always exempt. The drop is the alert the whole watcher exists for
+ * and it is not worth gating on an assumption about which variants a book
+ * happens to post; 'known' is already the quiet kind for everything else.
+ */
+export function demoteToKnown(kind) {
+  return kind === 'fantasy' ? kind : 'known';
+}
+
 export function isWatchedStat(book, ...labels) {
   const patterns = WATCHED_PATTERNS[book] || [];
   return labels.filter(Boolean).some((l) => patterns.some((re) => re.test(l)));

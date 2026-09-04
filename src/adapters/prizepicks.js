@@ -7,17 +7,12 @@
 // and the scheduler parks it on a 429.
 
 import { getJson } from '../http.js';
-import { classify } from '../fantasy.js';
+import { classify, demoteToKnown } from '../fantasy.js';
 
 /** Anything that is not the plain pick'em line: demon, goblin, and whatever
  *  PrizePicks names next. Absent odds_type means the standard offer. */
 export const isAlternate = (oddsType) =>
   !!oddsType && !/^standard$/i.test(String(oddsType).trim());
-
-/** Quiet an alternate line without hiding it. Fantasy is left alone so a drop
- *  can never be missed on a variant technicality; only watched markets and
- *  never-seen stats are silenced, and 'known' is already the quiet kind. */
-export const demoteToKnown = (kind) => (kind === 'fantasy' ? kind : 'known');
 
 const UFC_LEAGUE_ID = '12';
 const URL = `https://partner-api.prizepicks.com/projections?league_id=${UFC_LEAGUE_ID}`;

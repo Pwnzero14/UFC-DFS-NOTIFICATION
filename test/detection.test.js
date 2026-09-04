@@ -3,10 +3,10 @@
 
 import assert from 'node:assert/strict';
 import * as store from '../src/state.js';
-import { classify, marketKey } from '../src/fantasy.js';
+import { classify, marketKey, demoteToKnown } from '../src/fantasy.js';
 import { blackoutSince } from '../src/blackout.js';
 import { buildAlerts, moveThreshold } from '../src/alerts.js';
-import { isAlternate, demoteToKnown } from '../src/adapters/prizepicks.js';
+import { isAlternate } from '../src/adapters/prizepicks.js';
 import {
   buildDiscordPayload,
   moveDelta,
@@ -163,6 +163,40 @@ test('PrizePicks demon and goblin variants stay distinct', () => {
   ]);
   assert.equal(d.newProps.length, 3, 'each odds variant is its own offer');
   assert.equal(Object.keys(d.fresh).length, 3);
+});
+
+test('an alternate line cannot masquerade as a move on the standard one', () => {
+  // The 2026-09-04 fault. Underdog posted a second Significant Strikes line for
+  // Axel Sola at 89.5 beside his standard 32.5. Both had no variant, so both
+  // built the same propKey, and whichever the feed listed last owned it - the
+  // swap alerted as "32.5 -> 89.5 +57.00" while his real line never moved.
+  const state = { books: {} };
+  const line = (over) =>
+    prop({ statKey: 'significant_strikes', fighter: 'Axel Sola', kind: 'tracked', ...over });
+
+  const standard = line({ value: 32.5, variant: null });
+  const alt = line({ value: 89.5, variant: 'alt:abc123' });
+
+  let d = store.diff(state, 'underdog', [standard, alt]);
+  assert.equal(d.newProps.length, 2, 'the two offers are two props, not one');
+  store.commit(state, 'underdog', d.fresh);
+
+  // Feed order flips - the exact thing that used to fabricate a move.
+  d = store.diff(state, 'underdog', [alt, standard]);
+  assert.equal(d.moved.length, 0, 'reordering the feed must not invent a move');
+
+  // A genuine move on the standard line is still caught.
+  d = store.diff(state, 'underdog', [line({ value: 34.5, variant: null }), alt]);
+  assert.equal(d.moved.length, 1);
+  assert.equal(d.moved[0].previousValue, 32.5);
+  assert.equal(d.moved[0].value, 34.5);
+});
+
+test('an alternate reports but never alerts, and fantasy is still exempt', () => {
+  assert.equal(demoteToKnown('tracked'), 'known');
+  assert.equal(demoteToKnown('unknown'), 'known');
+  assert.equal(demoteToKnown('fantasy'), 'fantasy', 'the drop is never silenced');
+  assert.equal(store.ALERTING_KINDS.has('known'), false);
 });
 
 test('books do not leak into one another', () => {
