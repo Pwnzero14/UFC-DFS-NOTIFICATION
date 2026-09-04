@@ -54,12 +54,30 @@ $taskInstalled = $false
 try {
     $action = New-ScheduledTaskAction -Execute $node -Argument "`"$entry`"" -WorkingDirectory $root
 
-    # AtStartup is the one that matters: it fires at boot, before anyone signs
+    # AtStartup is the one that matters at boot: it fires before anyone signs
     # in, so an overnight crash-reboot brings the watcher back without you.
     # AtLogOn is kept as a second trigger so a manual stop/start still recovers.
+    #
+    # Neither of those can recover a sleep. On 2026-09-04 the machine slept at
+    # 03:55:47, five seconds after a poll; the watcher exited and stayed dead
+    # for seven hours, through the PrizePicks fantasy drop. There had been no
+    # reboot since Aug 27 so AtStartup never fired, and waking is not a logon.
+    #
+    # So the third trigger is a heartbeat: every five minutes, forever. With
+    # MultipleInstances IgnoreNew and the pid lockfile below, a start against a
+    # healthy watcher is a no-op, which makes this safe to fire constantly and
+    # able to heal any death - sleep, crash, or a kill nobody noticed - rather
+    # than only the two the other triggers cover.
+    $revive = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+        -RepetitionInterval (New-TimeSpan -Minutes 5)
+    # PowerShell 5.1 will not always set an unbounded duration from the
+    # cmdlet, so pin it explicitly - empty string means "indefinitely".
+    $revive.Repetition.Duration = ''
+
     $trigger = @(
         New-ScheduledTaskTrigger -AtStartup
         New-ScheduledTaskTrigger -AtLogOn
+        $revive
     )
 
     $settings = New-ScheduledTaskSettingsSet `
