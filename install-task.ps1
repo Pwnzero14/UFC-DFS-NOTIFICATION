@@ -105,8 +105,22 @@ try {
 
     $taskInstalled = $true
     Write-Host "Installed as a Scheduled Task running as SYSTEM."
-    Write-Host "  triggers : at startup (before sign-in) AND at logon"
+    Write-Host "  triggers : at startup (before sign-in), at logon, and every 5 min"
     Write-Host "  recovery : restarts every minute on failure, no time limit"
+    Write-Host "             the 5-minute trigger is what survives a sleep -"
+    Write-Host "             neither of the other two fires on resume"
+
+    # Read the repetition back rather than trusting the cmdlet: PowerShell 5.1
+    # does not reliably persist an unbounded interval, and a trigger that
+    # registered without one looks identical until the night it fails to fire.
+    $rep = (Get-ScheduledTask -TaskName $taskName).Triggers |
+        Where-Object { $_.Repetition.Interval } | Select-Object -First 1
+    if ($rep) {
+        Write-Host "  verified : repeats every $($rep.Repetition.Interval)" -ForegroundColor Green
+    } else {
+        Write-Host "  WARNING  : the repeat interval did not persist - a sleep will" -ForegroundColor Yellow
+        Write-Host "             still leave the watcher dead. Re-run this script." -ForegroundColor Yellow
+    }
     Write-Host ""
 
     # Two managers competing would just fight over the lock - drop the shortcut.
