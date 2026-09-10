@@ -1,11 +1,12 @@
-// Betr Picks - GraphQL. The public board needed no auth until 2026-09-07;
-// since then the gateway 401s anonymous callers and a bearer token from
-// config.json is the only way in. See authHeaders below.
+// Betr Picks. The public GraphQL board went auth-only on 2026-09-07 and then
+// session-only: the gateway requires a logged-in browser session, so this
+// background watcher cannot call it directly at all. The board is instead read
+// from a file the UFC analyzer's browser extension writes - see fetchProps.
 
+import { readFile, stat as statFile } from 'node:fs/promises';
 import { postJson } from '../http.js';
 import { classify } from '../fantasy.js';
 import { loadConfig } from '../config.js';
-import { betrAccessToken } from './betr-auth.js';
 
 const ENDPOINT = 'https://api.fantasy.betr.app/graphql';
 
@@ -59,59 +60,24 @@ const gqlHeaders = {
   Referer: 'https://picks.betr.app/',
 };
 
-/**
- * Betr closed /graphql to anonymous callers on 2026-09-07.
- *
- * This is not the August outage repeating. That one let the request reach
- * GraphQL and refused per-field, so the shape of the query mattered. This is a
- * flat 401 from the gateway before any query runs - even `{__typename}` is
- * refused - while /actuator/health still answers 200, so the service is up and
- * simply will not talk to us. No header, query or endpoint gets past it.
- *
- * The only way through is a bearer token, which has to come from a signed-in
- * session on Betr's phone app; there is no web login to take one from. Config
- * is re-read every poll so a token can be pasted into config.json and picked up
- * without restarting the watcher.
- */
-export async function authHeaders() {
-  // Preferred: a refresh token that self-renews forever (see betr-auth.js).
-  // betrAccessToken throws with an actionable message when a configured refresh
-  // token has gone bad - that surfaces to the poll as the Betr error, which is
-  // what we want, so it is deliberately not swallowed here.
-  const access = await betrAccessToken(loadConfig);
-  if (access) return { Authorization: `Bearer ${access}` };
-
-  // Fallback: a raw access token pasted straight in. Works until it expires
-  // (minutes), so it is only for a quick manual test - refreshToken is the one
-  // that lasts.
-  try {
-    const cfg = await loadConfig();
-    const token = String(cfg.betr?.authToken || '').trim();
-    if (!token) return {};
-    return { Authorization: /^bearer /i.test(token) ? token : `Bearer ${token}` };
-  } catch {
-    return {}; // never let a config read take the poll down
-  }
-}
-
+// The direct API is a dead end for this watcher and cannot be revived with a
+// token. Betr's gateway does not just check a Bearer - it requires the live
+// browser session (the cookies a logged-in tab carries), confirmed on
+// 2026-09-10: a genuinely valid access token, lifted straight from a working
+// browser session, still returns 401 from Node and even from a fresh headless
+// Chrome. Only the real logged-in browser gets in. So there is no token, no
+// header, and no refresh that helps; the board comes from the analyzer bridge
+// (see fetchProps and readBoardFile). This call stays only so that if Betr ever
+// reopens anonymous access it starts working again on its own.
 async function gql(query, variables = {}) {
-  const auth = await authHeaders();
   let body;
   try {
-    body = await postJson(
-      ENDPOINT,
-      { query, variables },
-      { headers: { ...gqlHeaders, ...auth } }
-    );
+    body = await postJson(ENDPOINT, { query, variables }, { headers: gqlHeaders });
   } catch (err) {
-    // A bare "HTTP 401" reads like a transient fault worth waiting out, and
-    // that is exactly the wrong conclusion here - nothing recovers on its own.
-    // Say which of the two situations it is, because the actions differ.
     if (err?.status === 401) {
       throw new Error(
-        auth.Authorization
-          ? 'Betr rejected the configured token (expired? re-copy it from the app)'
-          : 'Betr needs an account token - set betr.authToken in config.json'
+        'Betr API needs a logged-in browser session - configure betr.boardFile ' +
+          'to read the board from the analyzer instead'
       );
     }
     throw err;
@@ -130,8 +96,57 @@ async function gql(query, variables = {}) {
   return body.data;
 }
 
+// A board dropped on disk by something that CAN reach Betr - the UFC analyzer's
+// Chrome extension, which runs inside the logged-in browser and so carries the
+// session cookies Betr's gateway now demands. The watcher is a background Node
+// process with no browser session, so as of 2026-09-10 it cannot call Betr's
+// API at all; reading what the extension already fetched is the way in.
+//
+// Two shapes are accepted: the raw GraphQL `data` object ({ getUpcomingEventsV2:
+// [...] }), or a bare array of events. Anything else is ignored.
+export function normalizeBoard(raw) {
+  if (Array.isArray(raw)) return { getUpcomingEventsV2: raw };
+  if (raw && Array.isArray(raw.getUpcomingEventsV2)) return raw;
+  if (raw && raw.data && Array.isArray(raw.data.getUpcomingEventsV2)) return raw.data;
+  throw new Error('Betr board file has no getUpcomingEventsV2 array');
+}
+
+async function readBoardFile(path) {
+  return normalizeBoard(JSON.parse((await readFile(path, 'utf8')).replace(/^﻿/, '')));
+}
+
+// A board file older than this is stale - the extension stopped writing, and
+// serving old lines as if live would misreport the board. Fail instead, so the
+// heartbeat flags Betr unhealthy rather than the watcher quietly lying.
+const BOARD_FILE_MAX_AGE_MS = 15 * 60_000;
+
 export async function fetchProps() {
-  const data = await gql(LEAGUE_QUERY, { league: 'UFC' });
+  const cfg = await loadConfig().catch(() => ({}));
+  const boardFile = String(cfg.betr?.boardFile || '').trim();
+
+  let data;
+  if (boardFile) {
+    // File source: the analyzer bridge. Preferred whenever configured, since
+    // the direct API is a dead end for a session-less caller.
+    let stat;
+    try {
+      stat = await statFile(boardFile);
+    } catch {
+      throw new Error(`Betr board file not found: ${boardFile} - is the analyzer writing it?`);
+    }
+    const ageMs = Date.now() - stat.mtimeMs;
+    if (ageMs > BOARD_FILE_MAX_AGE_MS) {
+      throw new Error(
+        `Betr board file is stale (${Math.round(ageMs / 60000)}m old) - the analyzer stopped writing it`
+      );
+    }
+    data = await readBoardFile(boardFile);
+  } else {
+    // No bridge configured: try the API directly. It will 401 until Betr
+    // reopens anonymous access, but the path stays here for when it does.
+    data = await gql(LEAGUE_QUERY, { league: 'UFC' });
+  }
+
   const events = (data.getUpcomingEventsV2 || []).filter(
     (e) => e.status !== 'FINISHED'
   );

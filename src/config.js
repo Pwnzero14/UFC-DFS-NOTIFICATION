@@ -35,7 +35,11 @@ export async function loadConfig() {
     console.warn('[config] config.json not found — using defaults (no Discord webhook).');
     return { ...DEFAULTS, _path: path };
   }
-  const raw = JSON.parse(await readFile(path, 'utf8'));
+  // Strip a UTF-8 BOM before parsing. Windows editors and PowerShell's
+  // `Set-Content -Encoding utf8` prepend one, and JSON.parse rejects it - which
+  // is exactly how a hand-edited config.json silently stops the watcher.
+  const text = (await readFile(path, 'utf8')).replace(/^﻿/, '');
+  const raw = JSON.parse(text);
   return {
     ...DEFAULTS,
     ...raw,

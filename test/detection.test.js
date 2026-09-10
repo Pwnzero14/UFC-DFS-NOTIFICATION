@@ -7,8 +7,7 @@ import { classify, marketKey, demoteToKnown } from '../src/fantasy.js';
 import { blackoutSince } from '../src/blackout.js';
 import { buildAlerts, moveThreshold } from '../src/alerts.js';
 import { isAlternate } from '../src/adapters/prizepicks.js';
-import { authHeaders } from '../src/adapters/betr.js';
-import { betrAccessToken, _reset } from '../src/adapters/betr-auth.js';
+import { normalizeBoard } from '../src/adapters/betr.js';
 import {
   buildDiscordPayload,
   moveDelta,
@@ -1203,57 +1202,5 @@ test('the fantasy drop is never silenced by a variant', () => {
   assert.equal(demoteToKnown('fantasy'), 'fantasy');
 });
 
-await atest('betr mints an access token from a refresh token', async () => {
-  _reset();
-  let persisted = null;
-  const cfg = async () => ({ betr: { refreshToken: 'seed-refresh' } });
-  const io = {
-    persist: async (t) => { persisted = t; },
-    fetch: async () => ({
-      ok: true,
-      json: async () => ({ access_token: 'AAA', expires_in: 300, refresh_token: 'rotated-1' }),
-    }),
-  };
-  const tok = await betrAccessToken(cfg, io);
-  assert.equal(tok, 'AAA');
-  assert.equal(persisted, 'rotated-1', 'the rotated refresh token must be saved');
-});
-
-await atest('betr caches the access token instead of refreshing every poll', async () => {
-  _reset();
-  let calls = 0;
-  const cfg = async () => ({ betr: { refreshToken: 'seed' } });
-  const io = {
-    persist: async () => {},
-    fetch: async () => { calls++; return { ok: true, json: async () => ({ access_token: 'X', expires_in: 300 }) }; },
-  };
-  await betrAccessToken(cfg, io);
-  await betrAccessToken(cfg, io);
-  await betrAccessToken(cfg, io);
-  assert.equal(calls, 1, 'three polls, one network refresh');
-});
-
-await atest('a dead refresh token fails loudly, not silently', async () => {
-  _reset();
-  const cfg = async () => ({ betr: { refreshToken: 'expired' } });
-  const io = {
-    persist: async () => {},
-    fetch: async () => ({ ok: false, status: 400, text: async () => '{"error":"invalid_grant"}' }),
-  };
-  await assert.rejects(betrAccessToken(cfg, io), /re-grab it from the app/);
-});
-
-await atest('no refresh token configured means no header, no throw', async () => {
-  _reset();
-  const cfg = async () => ({ betr: {} });
-  assert.equal(await betrAccessToken(cfg, { fetch: async () => { throw new Error('should not be called'); } }), null);
-});
-
-await atest('betr sends no auth header until a token is configured', async () => {
-  // The default, and the one that has to be right: an empty `Bearer ` header
-  // is worse than none at all, since it turns a diagnosable anonymous 401 into
-  // a malformed-credentials one.
-  assert.deepEqual(await authHeaders(), {}, 'no token means no header at all');
-});
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);

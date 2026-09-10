@@ -36,7 +36,6 @@
     "control time": 30
   },
   "betr": {
-    "authToken": "",
-    "refreshToken": ""
+    "boardFile": ""
   }
 }
