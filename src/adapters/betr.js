@@ -84,11 +84,27 @@ export async function authHeaders() {
 }
 
 async function gql(query, variables = {}) {
-  const body = await postJson(
-    ENDPOINT,
-    { query, variables },
-    { headers: { ...gqlHeaders, ...(await authHeaders()) } }
-  );
+  const auth = await authHeaders();
+  let body;
+  try {
+    body = await postJson(
+      ENDPOINT,
+      { query, variables },
+      { headers: { ...gqlHeaders, ...auth } }
+    );
+  } catch (err) {
+    // A bare "HTTP 401" reads like a transient fault worth waiting out, and
+    // that is exactly the wrong conclusion here - nothing recovers on its own.
+    // Say which of the two situations it is, because the actions differ.
+    if (err?.status === 401) {
+      throw new Error(
+        auth.Authorization
+          ? 'Betr rejected the configured token (expired? re-copy it from the app)'
+          : 'Betr needs an account token - set betr.authToken in config.json'
+      );
+    }
+    throw err;
+  }
   // GraphQL can report errors and still return usable data - one bad record in
   // a nullable position nulls that record, not the response. Throwing on the
   // mere presence of `errors` threw away boards we could have read. Only a
