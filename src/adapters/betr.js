@@ -1,8 +1,10 @@
-// Betr Picks - GraphQL, no auth required for the public board.
-// Two stages: list upcoming UFC events, then pull projections per event.
+// Betr Picks - GraphQL. The public board needed no auth until 2026-09-07;
+// since then the gateway 401s anonymous callers and a bearer token from
+// config.json is the only way in. See authHeaders below.
 
 import { postJson } from '../http.js';
 import { classify } from '../fantasy.js';
+import { loadConfig } from '../config.js';
 
 const ENDPOINT = 'https://api.fantasy.betr.app/graphql';
 
@@ -56,11 +58,36 @@ const gqlHeaders = {
   Referer: 'https://picks.betr.app/',
 };
 
+/**
+ * Betr closed /graphql to anonymous callers on 2026-09-07.
+ *
+ * This is not the August outage repeating. That one let the request reach
+ * GraphQL and refused per-field, so the shape of the query mattered. This is a
+ * flat 401 from the gateway before any query runs - even `{__typename}` is
+ * refused - while /actuator/health still answers 200, so the service is up and
+ * simply will not talk to us. No header, query or endpoint gets past it.
+ *
+ * The only way through is a bearer token, which has to come from a signed-in
+ * session on Betr's phone app; there is no web login to take one from. Config
+ * is re-read every poll so a token can be pasted into config.json and picked up
+ * without restarting the watcher.
+ */
+export async function authHeaders() {
+  try {
+    const cfg = await loadConfig();
+    const token = String(cfg.betr?.authToken || '').trim();
+    if (!token) return {};
+    return { Authorization: /^bearer /i.test(token) ? token : `Bearer ${token}` };
+  } catch {
+    return {}; // never let a config read take the poll down
+  }
+}
+
 async function gql(query, variables = {}) {
   const body = await postJson(
     ENDPOINT,
     { query, variables },
-    { headers: gqlHeaders }
+    { headers: { ...gqlHeaders, ...(await authHeaders()) } }
   );
   // GraphQL can report errors and still return usable data - one bad record in
   // a nullable position nulls that record, not the response. Throwing on the

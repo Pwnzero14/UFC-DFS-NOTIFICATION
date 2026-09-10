@@ -7,6 +7,7 @@ import { classify, marketKey, demoteToKnown } from '../src/fantasy.js';
 import { blackoutSince } from '../src/blackout.js';
 import { buildAlerts, moveThreshold } from '../src/alerts.js';
 import { isAlternate } from '../src/adapters/prizepicks.js';
+import { authHeaders } from '../src/adapters/betr.js';
 import {
   buildDiscordPayload,
   moveDelta,
@@ -1199,6 +1200,13 @@ test('the fantasy drop is never silenced by a variant', () => {
   // The alert this whole thing exists for does not get gated on an assumption
   // about which variants PrizePicks happens to post.
   assert.equal(demoteToKnown('fantasy'), 'fantasy');
+});
+
+await atest('betr sends no auth header until a token is configured', async () => {
+  // The default, and the one that has to be right: an empty `Bearer ` header
+  // is worse than none at all, since it turns a diagnosable anonymous 401 into
+  // a malformed-credentials one.
+  assert.deepEqual(await authHeaders(), {}, 'no token means no header at all');
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);

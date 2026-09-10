@@ -34,5 +34,8 @@
     "takedowns": 0,
     "knockdowns": 0,
     "control time": 30
+  },
+  "betr": {
+    "authToken": ""
   }
 }

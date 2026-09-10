@@ -20,6 +20,11 @@ const DEFAULTS = {
   lineMoveMinDelta: 0,
   alertOnFirstRun: false,
   books: { underdog: true, prizepicks: true, betr: true, pick6: true },
+  // Betr closed its GraphQL endpoint to anonymous callers on 2026-09-07: the
+  // gateway answers 401 before any query runs, so there is no query shape or
+  // header that gets in. Paste a bearer token here and the adapter sends it.
+  // Read fresh every poll, so a token can be added without a restart.
+  betr: { authToken: '' },
   quietHours: { enabled: false, startHour: 2, endHour: 8 },
   heartbeat: { enabled: true, everyHours: 12 },
 };
@@ -36,6 +41,7 @@ export async function loadConfig() {
     ...raw,
     discord: { ...DEFAULTS.discord, ...(raw.discord || {}) },
     books: { ...DEFAULTS.books, ...(raw.books || {}) },
+    betr: { ...DEFAULTS.betr, ...(raw.betr || {}) },
     quietHours: { ...DEFAULTS.quietHours, ...(raw.quietHours || {}) },
     heartbeat: { ...DEFAULTS.heartbeat, ...(raw.heartbeat || {}) },
     _path: path,
