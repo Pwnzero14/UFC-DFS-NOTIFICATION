@@ -5,6 +5,7 @@
 import { postJson } from '../http.js';
 import { classify } from '../fantasy.js';
 import { loadConfig } from '../config.js';
+import { betrAccessToken } from './betr-auth.js';
 
 const ENDPOINT = 'https://api.fantasy.betr.app/graphql';
 
@@ -73,6 +74,16 @@ const gqlHeaders = {
  * without restarting the watcher.
  */
 export async function authHeaders() {
+  // Preferred: a refresh token that self-renews forever (see betr-auth.js).
+  // betrAccessToken throws with an actionable message when a configured refresh
+  // token has gone bad - that surfaces to the poll as the Betr error, which is
+  // what we want, so it is deliberately not swallowed here.
+  const access = await betrAccessToken(loadConfig);
+  if (access) return { Authorization: `Bearer ${access}` };
+
+  // Fallback: a raw access token pasted straight in. Works until it expires
+  // (minutes), so it is only for a quick manual test - refreshToken is the one
+  // that lasts.
   try {
     const cfg = await loadConfig();
     const token = String(cfg.betr?.authToken || '').trim();
