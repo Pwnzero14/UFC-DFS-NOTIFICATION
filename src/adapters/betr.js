@@ -1,12 +1,14 @@
-// Betr Picks. The public GraphQL board went auth-only on 2026-09-07 and then
-// session-only: the gateway requires a logged-in browser session, so this
-// background watcher cannot call it directly at all. The board is instead read
-// from a file the UFC analyzer's browser extension writes - see fetchProps.
+// Betr Picks. The public GraphQL board went auth-only on 2026-09-07. It is
+// reachable from plain Node with a raw-JWT Authorization header plus Channel:
+// WEB (see gql/authHeaders) - the token self-renews from an offline refresh
+// token in betr-auth.js. A betr.boardFile in config.json overrides that, reading
+// a board the UFC analyzer extension writes, for when a token is not set up.
 
 import { readFile, stat as statFile } from 'node:fs/promises';
 import { postJson } from '../http.js';
 import { classify } from '../fantasy.js';
 import { loadConfig } from '../config.js';
+import { betrAccessToken } from './betr-auth.js';
 
 const ENDPOINT = 'https://api.fantasy.betr.app/graphql';
 
@@ -60,24 +62,38 @@ const gqlHeaders = {
   Referer: 'https://picks.betr.app/',
 };
 
-// The direct API is a dead end for this watcher and cannot be revived with a
-// token. Betr's gateway does not just check a Bearer - it requires the live
-// browser session (the cookies a logged-in tab carries), confirmed on
-// 2026-09-10: a genuinely valid access token, lifted straight from a working
-// browser session, still returns 401 from Node and even from a fresh headless
-// Chrome. Only the real logged-in browser gets in. So there is no token, no
-// header, and no refresh that helps; the board comes from the analyzer bridge
-// (see fetchProps and readBoardFile). This call stays only so that if Betr ever
-// reopens anonymous access it starts working again on its own.
+/**
+ * Betr closed /graphql to anonymous callers on 2026-09-07, and the auth is
+ * fussy in exactly one way that cost a whole day to find: the Authorization
+ * header carries the RAW access-token JWT with NO `Bearer ` prefix, plus a
+ * `Channel: WEB` header. Prefixing with `Bearer ` - the obvious thing, and what
+ * every probe used first - returns 401, which read as "session-only, dead end"
+ * when it was really just the wrong header shape. A raw token works from plain
+ * Node, no browser session and no cookies. (Cross-checked against the analyzer
+ * extension's own working request, which documents the same rule.)
+ *
+ * The token comes from betr-auth: a one-time offline refresh token that renews
+ * itself forever. Access tokens are aud=account and last 30 days; the same
+ * shape the browser itself uses, and accepted here identically.
+ */
+async function authHeaders() {
+  const access = await betrAccessToken(loadConfig);
+  if (!access) return {};
+  // RAW jwt, not `Bearer <jwt>`. Channel is required alongside it.
+  return { Authorization: access, Channel: 'WEB' };
+}
+
 async function gql(query, variables = {}) {
+  const auth = await authHeaders();
   let body;
   try {
-    body = await postJson(ENDPOINT, { query, variables }, { headers: gqlHeaders });
+    body = await postJson(ENDPOINT, { query, variables }, { headers: { ...gqlHeaders, ...auth } });
   } catch (err) {
     if (err?.status === 401) {
       throw new Error(
-        'Betr API needs a logged-in browser session - configure betr.boardFile ' +
-          'to read the board from the analyzer instead'
+        auth.Authorization
+          ? 'Betr rejected the token (rotated or revoked - re-grab the refresh token)'
+          : 'Betr needs a token - set betr.refreshToken in config.json, or betr.boardFile'
       );
     }
     throw err;
@@ -96,14 +112,10 @@ async function gql(query, variables = {}) {
   return body.data;
 }
 
-// A board dropped on disk by something that CAN reach Betr - the UFC analyzer's
-// Chrome extension, which runs inside the logged-in browser and so carries the
-// session cookies Betr's gateway now demands. The watcher is a background Node
-// process with no browser session, so as of 2026-09-10 it cannot call Betr's
-// API at all; reading what the extension already fetched is the way in.
-//
-// Two shapes are accepted: the raw GraphQL `data` object ({ getUpcomingEventsV2:
-// [...] }), or a bare array of events. Anything else is ignored.
+// An alternate source: a board file the UFC analyzer extension writes. Kept as
+// an override for when a refresh token is not configured, since the extension
+// can reach Betr from inside the logged-in browser. Accepts the raw GraphQL
+// `data` object, a { data: {...} } envelope, or a bare events array.
 export function normalizeBoard(raw) {
   if (Array.isArray(raw)) return { getUpcomingEventsV2: raw };
   if (raw && Array.isArray(raw.getUpcomingEventsV2)) return raw;
@@ -126,8 +138,7 @@ export async function fetchProps() {
 
   let data;
   if (boardFile) {
-    // File source: the analyzer bridge. Preferred whenever configured, since
-    // the direct API is a dead end for a session-less caller.
+    // File source overrides the API when set.
     let stat;
     try {
       stat = await statFile(boardFile);
@@ -142,8 +153,7 @@ export async function fetchProps() {
     }
     data = await readBoardFile(boardFile);
   } else {
-    // No bridge configured: try the API directly. It will 401 until Betr
-    // reopens anonymous access, but the path stays here for when it does.
+    // Default: call the API with the self-renewing token.
     data = await gql(LEAGUE_QUERY, { league: 'UFC' });
   }
 
