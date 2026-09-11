@@ -3,10 +3,71 @@
 // Chain: over_under_line -> over_under.appearance_stat -> appearance -> player
 //        appearance.match_id -> solo_games (the fight)
 
+import { readFile, stat as statFile } from 'node:fs/promises';
 import { getJson } from '../http.js';
 import { classify, demoteToKnown } from '../fantasy.js';
+import { loadConfig } from '../config.js';
 
-const URL = 'https://api.underdogfantasy.com/beta/v6/over_under_lines?sport_id=MMA';
+// The /beta/v6 endpoint started answering 426 upgrade_required on 2026-09-10 -
+// a client-version wall a background caller cannot satisfy. The older /v1
+// endpoint still serves the same over_under_lines structure, unauthenticated,
+// and takes the same sport_id filter. Found by reading which endpoint the UFC
+// analyzer extension uses; /v6 was simply retired out from under us.
+const URL = 'https://api.underdogfantasy.com/v1/over_under_lines?sport_id=MMA';
+
+// Underdog's API started answering 426 upgrade_required on 2026-09-10, and
+// unlike Betr there is no header that gets a background caller past it - the
+// real app satisfies a version check the watcher cannot reproduce. So the board
+// comes from a file the UFC analyzer extension writes: the analyzer runs inside
+// the logged-in browser, intercepts the page's own over_under_lines fetch, and
+// dumps the parsed fighters. betr.boardFile does the same for Betr; this is the
+// underdog.boardFile equivalent, reading the analyzer's fighter shape
+// ({ name, line_fp, line_ss, line_td, opponent }) rather than the raw API.
+const BOARD_FILE_MAX_AGE_MS = 30 * 60_000;
+
+/** "Silva" + "Delgado" -> "Delgado vs Silva", identical for both fighters. */
+function matchupFromNames(name, opponent) {
+  const surname = (n) => String(n || '').trim().split(/\s+/).pop();
+  const a = surname(name);
+  const b = surname(opponent);
+  if (!a || !b) return name || null;
+  return [a, b].sort((x, y) => x.localeCompare(y)).join(' vs ');
+}
+
+/** Build props from the analyzer's fighter array. One prop per line present. */
+function propsFromAnalyzerFighters(fighters) {
+  const props = [];
+  const emit = (fighter, statLabel, statKey, value, opponent) => {
+    if (value == null) return;
+    props.push({
+      book: meta.key,
+      id: `${statKey}:${fighter}`,
+      fighter,
+      statLabel,
+      statKey,
+      kind: classify(meta.key, statLabel, statKey),
+      value: Number(value),
+      status: 'open',
+      event: matchupFromNames(fighter, opponent),
+      startsAt: null,
+      url: meta.boardUrl,
+    });
+  };
+  for (const f of fighters || []) {
+    if (!f?.name) continue;
+    emit(f.name, 'Fantasy Points', 'fantasy_points', f.line_fp, f.opponent);
+    emit(f.name, 'Significant Strikes', 'significant_strikes', f.line_ss, f.opponent);
+    emit(f.name, 'Takedowns', 'takedowns', f.line_td, f.opponent);
+  }
+  return props;
+}
+
+/** Accept the analyzer's shapes: { fighters: [...] } or a bare fighter array. */
+export function normalizeUnderdogBoard(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (raw && Array.isArray(raw.fighters)) return raw.fighters;
+  throw new Error('Underdog board file has no fighters array');
+}
 
 /**
  * Underdog truncates every one of its own title fields ("Hernandez vs Rodrig…"),
@@ -38,6 +99,26 @@ export const meta = {
 };
 
 export async function fetchProps() {
+  const cfg = await loadConfig().catch(() => ({}));
+  const boardFile = String(cfg.underdog?.boardFile || '').trim();
+
+  if (boardFile) {
+    let st;
+    try {
+      st = await statFile(boardFile);
+    } catch {
+      throw new Error(`Underdog board file not found: ${boardFile} - run the analyzer's AUTO-FETCH`);
+    }
+    const ageMs = Date.now() - st.mtimeMs;
+    if (ageMs > BOARD_FILE_MAX_AGE_MS) {
+      throw new Error(
+        `Underdog board file is stale (${Math.round(ageMs / 60000)}m old) - the analyzer has not fetched recently`
+      );
+    }
+    const raw = JSON.parse((await readFile(boardFile, 'utf8')).replace(/^﻿/, ''));
+    return propsFromAnalyzerFighters(normalizeUnderdogBoard(raw));
+  }
+
   const data = await getJson(URL, {
     headers: { Referer: 'https://underdogfantasy.com/' },
   });

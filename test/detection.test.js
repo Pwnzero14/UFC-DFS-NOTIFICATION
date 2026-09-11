@@ -8,6 +8,7 @@ import { blackoutSince } from '../src/blackout.js';
 import { buildAlerts, moveThreshold } from '../src/alerts.js';
 import { isAlternate } from '../src/adapters/prizepicks.js';
 import { normalizeBoard } from '../src/adapters/betr.js';
+import { normalizeUnderdogBoard } from '../src/adapters/underdog.js';
 import {
   buildDiscordPayload,
   moveDelta,
@@ -1202,5 +1203,12 @@ test('the fantasy drop is never silenced by a variant', () => {
   assert.equal(demoteToKnown('fantasy'), 'fantasy');
 });
 
+
+test('underdog board-file fallback accepts the analyzer shapes', () => {
+  const fs = [{ name: 'A', line_fp: 90 }];
+  assert.deepEqual(normalizeUnderdogBoard({ fighters: fs }), fs);
+  assert.deepEqual(normalizeUnderdogBoard(fs), fs);
+  assert.throws(() => normalizeUnderdogBoard({ nope: 1 }), /no fighters array/);
+});
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);
