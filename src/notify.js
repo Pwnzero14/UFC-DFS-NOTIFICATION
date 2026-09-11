@@ -196,9 +196,18 @@ export function buildHeartbeatPayload(state, cfg, books, uptimeMs) {
       ? `<t:${Math.floor(new Date(entry.updatedAt).getTime() / 1000)}:R>`
       : 'unknown';
 
+    // A book that never offers fantasy (a real sportsbook) gets no fantasy
+    // clause at all - "no fantasy yet" would imply a line is still pending.
+    const fantasyClause =
+      meta.offersFantasy === false
+        ? null
+        : fantasy
+          ? `**${fantasy} FANTASY**`
+          : 'no fantasy yet';
+
     rows.push(
-      `${ok ? '🟢' : '🔴'} **${meta.name}** — ${props.length} props, ` +
-        (fantasy ? `**${fantasy} FANTASY**` : 'no fantasy yet') +
+      `${ok ? '🟢' : '🔴'} **${meta.name}** — ${props.length} props` +
+        (fantasyClause ? `, ${fantasyClause}` : '') +
         ` · ${age}`
     );
   }

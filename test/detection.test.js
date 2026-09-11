@@ -664,6 +664,7 @@ console.log('\nheartbeat');
 const BOOKS = [
   { key: 'underdog', name: 'Underdog' },
   { key: 'betr', name: 'Betr' },
+  { key: 'dksportsbook', name: 'DraftKings Sportsbook', offersFantasy: false },
 ];
 const healthyState = {
   books: {
@@ -676,6 +677,11 @@ const healthyState = {
       healthy: true,
       updatedAt: new Date().toISOString(),
       props: { c: { kind: 'known' } },
+    },
+    dksportsbook: {
+      healthy: true,
+      updatedAt: new Date().toISOString(),
+      props: { d: { kind: 'tracked' }, e: { kind: 'tracked' } },
     },
   },
 };
@@ -712,6 +718,16 @@ test('fantasy props are called out once they exist', () => {
   withFantasy.books.underdog.props.z = { kind: 'fantasy' };
   const p = buildHeartbeatPayload(withFantasy, {}, BOOKS, 0);
   assert.match(p.embeds[0].description, /\*\*1 FANTASY\*\*/);
+});
+
+test('a sportsbook that never offers fantasy gets no fantasy clause', () => {
+  const p = buildHeartbeatPayload(healthyState, {}, BOOKS, 0);
+  assert.match(p.embeds[0].description, /🟢 \*\*DraftKings Sportsbook\*\* — 2 props · /);
+  const dkLine = p.embeds[0].description
+    .split('\n')
+    .find((l) => l.includes('DraftKings Sportsbook'));
+  assert.doesNotMatch(dkLine, /no fantasy yet/);
+  assert.doesNotMatch(dkLine, /FANTASY/);
 });
 
 test('a manual heartbeat does not claim a bogus uptime', () => {

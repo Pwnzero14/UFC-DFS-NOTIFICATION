@@ -26,6 +26,9 @@ export const meta = {
   boardUrl: URL,
   // One browser session covers every tab, but it is a heavy page - be gentle.
   minIntervalMs: 300_000,
+  // A real sportsbook, not a DFS site: it never posts fantasy points, so the
+  // heartbeat must not tag it "no fantasy yet" as if a line were still pending.
+  offersFantasy: false,
 };
 
 const SCRIPT = `(async () => {
