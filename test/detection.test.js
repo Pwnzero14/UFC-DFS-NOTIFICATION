@@ -870,7 +870,10 @@ await atest('a countdown is reported with the raw card text behind it', async ()
   // shape rather than an exact second.
   assert.equal(dyer.clocks.length, 1);
   assert.match(dyer.clocks[0], /^59:\d{2}$/);
-  assert.deepEqual(dyer.lines, ['S. Dyer', 'vs Reed', dyer.clocks[0], '93.5']);
+  // The countdown is first seen on the selected tab (Significant Strikes), which
+  // is now read before the fantasy pass - so the evidence carries that card's
+  // line (54.5), not the fantasy one.
+  assert.deepEqual(dyer.lines, ['S. Dyer', 'vs Reed', dyer.clocks[0], '54.5']);
 });
 
 await atest('a quiet board reports no countdowns to log', async () => {
@@ -896,6 +899,23 @@ await atest('a board with takedowns but no fantasy tab still reads them', async 
   assert.deepEqual(byFighter(out.takedowns), { 'S. Dyer': '1.5', 'E. Reed': '2.5' });
 });
 
+await atest('the selected tab is read whole in the browser, not the truncated HTML', async () => {
+  // Significant Strikes is the default tab, and the SSR HTML only carries its
+  // first screen of cards. Reading it in the browser instead is what stops a
+  // fighter past that cutoff from vanishing - on 2026-09-11 Gantt's SS line was
+  // card ~24 of 26, missing from the HTML entirely, so his 16.5 -> 29.5 move
+  // was never seen and never pinged.
+  const out = await readBoard();
+  assert.equal(out.selectedTab, 'Significant Strikes');
+  assert.deepEqual(byFighter(out.selectedCards), { 'S. Dyer': '54.5', 'E. Reed': '48.5' });
+});
+
+await atest('the selected-tab read does not take a lock countdown as the line', async () => {
+  // The same clock that fooled the fantasy reader sits on these cards too.
+  const out = await readBoard({ countdownSecs: 3587 });
+  assert.deepEqual(byFighter(out.selectedCards), { 'S. Dyer': '54.5', 'E. Reed': '48.5' });
+});
+
 await atest('takedowns still dodge the clock with no fantasy tab to learn from', async () => {
   // With no fantasy pass, the Takedowns pass is what teaches Control Time the
   // countdown - and must not be fooled by it itself.
@@ -915,6 +935,13 @@ test('an impossible takedown value is nulled too', () => {
 test('an impossible fantasy value is nulled, not published', () => {
   assert.equal(boundedValue('Fantasy Points', '93.5'), 93.5);
   assert.equal(boundedValue('Fantasy Points', 3587), null);
+});
+
+test('an impossible significant strikes value is nulled too', () => {
+  // The selected tab is now bounded like the clicked markets, so a leaked clock
+  // or price on it cannot reach Discord as a line.
+  assert.equal(boundedValue('Significant Strikes', '54.5'), 54.5);
+  assert.equal(boundedValue('Significant Strikes', 3587), null);
 });
 
 test('control time is capped at the length of a five round fight', () => {

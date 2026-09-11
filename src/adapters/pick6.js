@@ -115,6 +115,8 @@ export const BROWSER_SCRIPT = `(async () => {
     fantasy: null,
     takedowns: null,
     controlTime: null,
+    selectedTab: '',
+    selectedCards: null,
     tabs: tabsNow().map(t => (t.textContent || '').trim()),
   };
 
@@ -134,6 +136,19 @@ export const BROWSER_SCRIPT = `(async () => {
       if (!known) out.countdowns.push({ fighter: c.fighter, clocks: c.clocks, lines: c.lines });
     }
   };
+
+  // The selected tab (Significant Strikes by default) renders in full in the
+  // browser, while the SSR HTML carries only its first screen of cards - so the
+  // HTML-only read of it was truncated to the top ~12 fighters. Read it here,
+  // before any tab click moves off it, so its watched market covers the whole
+  // board. 2026-09-11: Gantt's SS line sat past that cutoff (card ~24 of 26), so
+  // his 16.5 -> 29.5 move was never even seen, let alone pinged.
+  out.selectedTab = selectedTab();
+  {
+    const cards = readCards('number');
+    learnCountdowns(cards);
+    out.selectedCards = cards.filter(c => c.fighter && c.value != null);
+  }
 
   if (await openTab(/fantasy/i, 'number')) {
     const cards = readCards('number');
@@ -194,6 +209,10 @@ const MAX_VALUE = {
   // Takedown lines sit between 0.5 and about 5.5; 20 is well clear of any of
   // them and still nowhere near a stray clock or price.
   'Takedowns': 20,
+  // Significant Strikes lines top out around 70-120 for the heaviest strikers;
+  // 300 is far past anything the book posts while still catching a stray clock
+  // or price that leaked into a card.
+  'Significant Strikes': 300,
 };
 
 /**
@@ -361,16 +380,56 @@ export async function fetchProps() {
 
   const props = [];
 
-  // One prop per player card, attributed to the selected category.
-  for (const card of cards) {
+  // Markets that need a click: fantasy, Takedowns, and Control Time behind the
+  // Time tab. One browser trip covers all three; anything it returns is emitted
+  // here, so the tab-only placeholder below is only reached for markets nobody
+  // asked for.
+  //
+  // The trip also re-reads the selected tab in full: the SSR HTML only carries
+  // its first screen of cards (~12), so a watched market there - Significant
+  // Strikes - was silently truncated, and a fighter past the cutoff (Gantt on
+  // 2026-09-11) was never tracked at all. So run the browser whenever the
+  // selected tab is itself a watched market, not only for the other tabs.
+  const hasFantasyTab = tabs.some((t) => classify(meta.key, t.label) === 'fantasy');
+  const hasTakedownsTab = tabs.some((t) => /^takedowns$/i.test(t.label));
+  const hasTimeTab = tabs.some((t) => /^time$/i.test(t.label));
+  const selectedWatched = ['fantasy', 'tracked'].includes(classify(meta.key, selected));
+  const clicked = { fantasy: null, takedowns: null, controlTime: null, selectedTab: null, selectedCards: null };
+
+  if ((hasFantasyTab || hasTakedownsTab || hasTimeTab || selectedWatched) && findBrowser()) {
+    try {
+      const got = await fetchClickedMarkets({ expectFantasy: hasFantasyTab });
+      clicked.fantasy = got.fantasy;
+      clicked.takedowns = got.takedowns;
+      clicked.controlTime = got.controlTime;
+      clicked.selectedTab = got.selectedTab;
+      clicked.selectedCards = got.selectedCards;
+    } catch (err) {
+      // A transient browser failure must NOT fall through to the tab-only
+      // placeholder. That placeholder is a different prop key, so it reads as
+      // a brand-new fantasy prop and fires a full "PROPS ARE UP" ping - for a
+      // degradation rather than a drop. Throwing instead lets the scheduler
+      // back off and the stored values carry over untouched.
+      throw new Error(`clicked markets unavailable: ${err.message}`);
+    }
+  }
+
+  // One prop per player card on the selected tab. Prefer the browser's complete
+  // read; fall back to the truncated SSR HTML cards only when no browser ran.
+  const selectedLabel = clicked.selectedTab || selected;
+  const selectedCards =
+    clicked.selectedCards && clicked.selectedCards.length ? clicked.selectedCards : cards;
+  for (const card of selectedCards) {
     props.push({
       book: meta.key,
-      id: `${selected}:${card.fighter}`,
+      id: `${selectedLabel}:${card.fighter}`,
       fighter: card.fighter,
-      statLabel: selected,
-      statKey: selected,
-      kind: classify(meta.key, selected),
-      value: card.value,
+      statLabel: selectedLabel,
+      statKey: selectedLabel,
+      kind: classify(meta.key, selectedLabel),
+      // Bounded like the clicked markets: a leaked clock or price on this tab
+      // must not reach Discord as a line move.
+      value: boundedValue(selectedLabel, card.value),
       status: 'open',
       // Same canonical matchup the clicked markets use. Built raw from the
       // fighter's own perspective, this produced a different event name for
@@ -382,31 +441,6 @@ export async function fetchProps() {
       startsAt: null,
       url: meta.boardUrl,
     });
-  }
-
-  // Markets that need a click: fantasy, Takedowns, and Control Time behind the
-  // Time tab. One browser trip covers all three; anything it returns is emitted
-  // here, so the tab-only placeholder below is only reached for markets nobody
-  // asked for.
-  const hasFantasyTab = tabs.some((t) => classify(meta.key, t.label) === 'fantasy');
-  const hasTakedownsTab = tabs.some((t) => /^takedowns$/i.test(t.label));
-  const hasTimeTab = tabs.some((t) => /^time$/i.test(t.label));
-  const clicked = { fantasy: null, takedowns: null, controlTime: null };
-
-  if ((hasFantasyTab || hasTakedownsTab || hasTimeTab) && findBrowser()) {
-    try {
-      const got = await fetchClickedMarkets({ expectFantasy: hasFantasyTab });
-      clicked.fantasy = got.fantasy;
-      clicked.takedowns = got.takedowns;
-      clicked.controlTime = got.controlTime;
-    } catch (err) {
-      // A transient browser failure must NOT fall through to the tab-only
-      // placeholder. That placeholder is a different prop key, so it reads as
-      // a brand-new fantasy prop and fires a full "PROPS ARE UP" ping - for a
-      // degradation rather than a drop. Throwing instead lets the scheduler
-      // back off and the stored values carry over untouched.
-      throw new Error(`clicked markets unavailable: ${err.message}`);
-    }
   }
 
   for (const card of clicked.fantasy || []) {
