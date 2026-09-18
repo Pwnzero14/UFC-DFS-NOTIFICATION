@@ -201,9 +201,9 @@ test('a demon line is silenced only when a standard offer shares its fighter+sta
   assert.equal(std.kind, 'tracked', 'the standard line is the one that alerts');
 });
 
-test('a demon/goblin-only market is tracked, not silenced into nothing', () => {
-  // Knockdowns, every card: PrizePicks posts them only as demon/goblin. With no
-  // standard to prefer, the alternate is the whole market and must ping.
+test('a lone demon/goblin line is tracked, not silenced into nothing', () => {
+  // Knockdowns, every card: PrizePicks posts them only as demon/goblin, one line
+  // per fighter. A lone alternate is the whole market and must ping.
   const board = ppBoard([
     { player: 'p1', stat: 'Knockdowns', odds: 'demon', line: 0.5 },
     { player: 'p2', stat: 'Knockdowns', odds: 'goblin', line: 0.5 },
@@ -211,6 +211,22 @@ test('a demon/goblin-only market is tracked, not silenced into nothing', () => {
   const props = ppNormalizeBoard(board);
   assert.equal(props.length, 2);
   assert.ok(props.every((p) => p.kind === 'tracked'), 'alt-only knockdowns are tracked');
+});
+
+test('an alternate ladder stays quiet - it would collide into fake moves', () => {
+  // 2026-09-18: PrizePicks posted takedowns only as a ladder of demon lines
+  // (0.5/2.5/3.5/4.5), all sharing one variant. Tracked, they collapse onto one
+  // propKey and each poll a different rung reads as a line move. More than one
+  // offer for a fighter+stat with no standard -> every alternate stays known.
+  const board = ppBoard([
+    { player: 'p1', stat: 'Takedowns', odds: 'demon', line: 2.5 },
+    { player: 'p1', stat: 'Takedowns', odds: 'demon', line: 3.5 },
+    { player: 'p1', stat: 'Takedowns', odds: 'demon', line: 4.5 },
+    { player: 'p1', stat: 'Takedowns', odds: 'goblin', line: 0.5 },
+  ]);
+  const props = ppNormalizeBoard(board);
+  assert.equal(props.length, 4);
+  assert.ok(props.every((p) => p.kind === 'known'), 'a ladder of alt lines stays quiet');
 });
 
 test('an alternate line cannot masquerade as a move on the standard one', () => {

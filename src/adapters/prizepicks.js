@@ -34,19 +34,22 @@ export function normalizeBoard(data) {
     (data.included || []).map((i) => [`${i.type}:${i.id}`, i])
   );
 
-  // A demon/goblin line is an ALTERNATE to a standard pick'em offer, so it is
-  // only silenced when that standard offer is actually on the board for the
-  // same fighter+stat - otherwise there is nothing to prefer it over. When
-  // PrizePicks posts a market ONLY as demon/goblin - knockdowns are routinely
-  // alt-only, every card - the alt IS the market, and silencing it means the
-  // market pings for nobody. So first record which fighter+stat pairs have a
-  // standard offer; an alternate is demoted only when its pair is in that set.
-  const standardOffers = new Set();
+  // How many offers PrizePicks posts for each fighter+stat. An alternate
+  // (demon/goblin) line is tracked ONLY when it is the whole market for its
+  // fighter+stat - a single line with nothing to collide with. That covers the
+  // alt-only markets worth alerting on (knockdowns, always a lone 0.5) without
+  // reintroducing the collision the silencing exists to prevent: PrizePicks also
+  // posts alt LADDERS - several demon/goblin lines at once (takedowns at
+  // 0.5/2.5/3.5/4.5) - that all share one variant (odds_type + game_id) and so
+  // land on one propKey. Tracked, each poll a different rung wins the key and
+  // reads as a fake line move (Doo Ho Choi "1.5 -> 4.5", "1.5 -> 3.5", ... every
+  // poll, 2026-09-18). So a fighter+stat with more than one offer keeps only its
+  // standard line tracked (if any); every alternate there stays known and quiet.
+  const offerCount = new Map();
   for (const proj of data.data || []) {
-    const a = proj.attributes || {};
-    if (isAlternate(a.odds_type)) continue;
     const pid = proj.relationships?.new_player?.data?.id || '';
-    standardOffers.add(`${pid}|${a.stat_type}`);
+    const gk = `${pid}|${proj.attributes?.stat_type}`;
+    offerCount.set(gk, (offerCount.get(gk) || 0) + 1);
   }
 
   const props = [];
@@ -66,16 +69,12 @@ export function normalizeBoard(data) {
         ? `${fighter} vs ${a.description}`
         : fighter;
 
-    // Demon and goblin are alternate lines on the same stat, priced away from
-    // the middle. When a standard offer for the same fighter+stat exists, that
-    // pick'em line is the only one worth alerting on - tracking all three means
-    // one fighter's strikes line is three props that move independently, on the
-    // book with the largest board of the five. The alternates then still report
-    // (visible and countable) but classify known and keep quiet. But when no
-    // standard exists, the alternate is the whole market and is tracked so it
-    // still pings. Fantasy is deliberately exempt from demotion either way.
+    // A standard line is always tracked. An alternate is tracked only when it is
+    // the lone offer for its fighter+stat - otherwise (a standard sibling to
+    // prefer, or a ladder of alt lines that would collide) it stays known.
     const alternate = isAlternate(a.odds_type);
-    const hasStandard = standardOffers.has(`${playerId || ''}|${a.stat_type}`);
+    const soleOffer = offerCount.get(`${playerId || ''}|${a.stat_type}`) === 1;
+    const trackable = !alternate || soleOffer;
     const baseKind = classify(meta.key, label, a.stat_type);
 
     props.push({
@@ -87,7 +86,7 @@ export function normalizeBoard(data) {
       // demon/goblin are separate offers on the same stat; game_id keeps
       // re-posted boards for the same matchup apart.
       variant: [a.odds_type, a.game_id].filter(Boolean).join(':') || null,
-      kind: alternate && hasStandard ? demoteToKnown(baseKind) : baseKind,
+      kind: trackable ? baseKind : demoteToKnown(baseKind),
       value: a.line_score == null ? null : Number(a.line_score),
       status: a.status,
       event,
