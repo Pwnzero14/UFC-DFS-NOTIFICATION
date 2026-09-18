@@ -6,7 +6,7 @@ import * as store from '../src/state.js';
 import { classify, marketKey, demoteToKnown } from '../src/fantasy.js';
 import { blackoutSince } from '../src/blackout.js';
 import { buildAlerts, moveThreshold } from '../src/alerts.js';
-import { isAlternate } from '../src/adapters/prizepicks.js';
+import { isAlternate, normalizeBoard as ppNormalizeBoard } from '../src/adapters/prizepicks.js';
 import { normalizeBoard } from '../src/adapters/betr.js';
 import { normalizeUnderdogBoard } from '../src/adapters/underdog.js';
 import {
@@ -165,6 +165,52 @@ test('PrizePicks demon and goblin variants stay distinct', () => {
   ]);
   assert.equal(d.newProps.length, 3, 'each odds variant is its own offer');
   assert.equal(Object.keys(d.fresh).length, 3);
+});
+
+// A tiny JSON:API board builder for the normalizeBoard rule tests.
+function ppBoard(rows) {
+  return {
+    data: rows.map((r, i) => ({
+      id: String(i + 1),
+      attributes: {
+        stat_type: r.stat,
+        stat_display_name: r.stat,
+        odds_type: r.odds, // undefined = standard
+        line_score: r.line ?? 0.5,
+        description: r.opponent || 'Opp',
+        game_id: r.game || 'g1',
+      },
+      relationships: { new_player: { data: { id: r.player } } },
+    })),
+    included: [],
+  };
+}
+
+test('a demon line is silenced only when a standard offer shares its fighter+stat', () => {
+  // Strikes: fighter p1 has a standard AND a demon line -> demon stays quiet.
+  const board = ppBoard([
+    { player: 'p1', stat: 'Significant Strikes', odds: undefined, line: 32.5 },
+    { player: 'p1', stat: 'Significant Strikes', odds: 'demon', line: 41.5 },
+  ]);
+  const props = ppNormalizeBoard(board);
+  // Standard has no odds_type, so its variant is just the game id; the demon's
+  // carries the odds type.
+  const std = props.find((p) => p.variant === 'g1');
+  const demon = props.find((p) => p.variant === 'demon:g1');
+  assert.equal(demon.kind, 'known', 'demon is demoted when a standard exists');
+  assert.equal(std.kind, 'tracked', 'the standard line is the one that alerts');
+});
+
+test('a demon/goblin-only market is tracked, not silenced into nothing', () => {
+  // Knockdowns, every card: PrizePicks posts them only as demon/goblin. With no
+  // standard to prefer, the alternate is the whole market and must ping.
+  const board = ppBoard([
+    { player: 'p1', stat: 'Knockdowns', odds: 'demon', line: 0.5 },
+    { player: 'p2', stat: 'Knockdowns', odds: 'goblin', line: 0.5 },
+  ]);
+  const props = ppNormalizeBoard(board);
+  assert.equal(props.length, 2);
+  assert.ok(props.every((p) => p.kind === 'tracked'), 'alt-only knockdowns are tracked');
 });
 
 test('an alternate line cannot masquerade as a move on the standard one', () => {
