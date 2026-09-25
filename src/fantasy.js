@@ -57,6 +57,11 @@ const KNOWN_NON_FANTASY = {
     'knockouts', 'takedowns', 'submissions',
     'fight time', 'fight time (mins)', 'significant strikes attempted',
     'knockdowns', 'control time', 'total rounds', 'finishes',
+    // 'time' is the label of the whole Time TAB, which holds Fight Time and
+    // Control Time. Control Time is emitted tracked on its own; Fight Time is
+    // not wanted. So the Time-tab placeholder (emitted only when Control Time
+    // could not be read that cycle) must stay quiet, not ping as a new market.
+    'time',
   ],
 };
 

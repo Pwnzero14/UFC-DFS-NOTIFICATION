@@ -510,6 +510,15 @@ test('pick6 takedowns classify known so the tab placeholder stays quiet', () => 
   assert.equal(classify('pick6', 'Takedowns', 'takedowns'), 'known');
 });
 
+test('the pick6 Time tab stays quiet - only Control Time is wanted from it', () => {
+  // The Time tab holds Fight Time and Control Time. Control Time is emitted with
+  // an explicit kind:'tracked'; Fight Time is not wanted. The tab-only
+  // placeholder (label "Time", fired only when Control Time could not be read)
+  // must classify known so it never pings as a new market.
+  assert.equal(classify('pick6', 'Time'), 'known');
+  assert.equal(classify('pick6', 'Fight Time'), 'known');
+});
+
 test('round 1 sig strikes is still watched in its own right', () => {
   // The new whole-name patterns must not have displaced the round-scoped ones.
   assert.equal(classify('underdog', 'Round 1 Significant Strikes'), 'tracked');
