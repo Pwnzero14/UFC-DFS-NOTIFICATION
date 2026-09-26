@@ -9,8 +9,10 @@ const DEFAULTS = {
   discord: {
     webhookUrl: '',
     username: 'UFC Fantasy Alerts',
-    mention: '@everyone',
-    mentionOnLineMove: false,
+    // Per-book channel routing: bookKey -> webhook URL. A book with no entry
+    // falls back to webhookUrl. The heartbeat and blackout notices always use
+    // webhookUrl (the main channel) since they cover every book at once.
+    webhooks: {},
   },
   windowsToast: true,
   pollSeconds: 60,
@@ -50,6 +52,15 @@ export async function loadConfig() {
     heartbeat: { ...DEFAULTS.heartbeat, ...(raw.heartbeat || {}) },
     _path: path,
   };
+}
+
+/**
+ * The Discord webhook a book's alerts post to: its own channel when mapped under
+ * discord.webhooks, else the default webhookUrl (the main channel). Heartbeat and
+ * blackout notices are not book-specific, so they use webhookUrl directly.
+ */
+export function webhookFor(cfg, bookKey) {
+  return cfg.discord?.webhooks?.[bookKey] || cfg.discord?.webhookUrl || null;
 }
 
 export function inQuietHours(cfg, now = new Date()) {

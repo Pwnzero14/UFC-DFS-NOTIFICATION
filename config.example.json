@@ -2,8 +2,13 @@
   "discord": {
     "webhookUrl": "",
     "username": "UFC Fantasy Alerts",
-    "mention": "@everyone",
-    "mentionOnLineMove": true
+    "webhooks": {
+      "underdog": "",
+      "prizepicks": "",
+      "betr": "",
+      "pick6": "",
+      "dksportsbook": ""
+    }
   },
   "windowsToast": true,
   "pollSeconds": 60,

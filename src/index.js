@@ -3,7 +3,7 @@
 // plus tracked over/under markets on the DraftKings Sportsbook.
 
 import { join } from 'node:path';
-import { loadConfig, inQuietHours, ROOT } from './config.js';
+import { loadConfig, inQuietHours, webhookFor, ROOT } from './config.js';
 import * as store from './state.js';
 import * as lock from './lock.js';
 import { teeConsoleTo } from './logfile.js';
@@ -71,7 +71,9 @@ async function dispatch(alert, cfg) {
     if (res.error) console.log(`   [toast failed] ${res.error}`);
   }
 
-  const url = cfg.discord?.webhookUrl;
+  // Route each book's alert to its own channel's webhook, falling back to the
+  // main webhook when a book has no channel mapped.
+  const url = webhookFor(cfg, alert.bookMeta?.key);
   if (!url) return true;
 
   try {

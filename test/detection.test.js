@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import * as store from '../src/state.js';
 import { classify, marketKey, demoteToKnown } from '../src/fantasy.js';
 import { blackoutSince } from '../src/blackout.js';
+import { webhookFor } from '../src/config.js';
 import { buildAlerts, moveThreshold } from '../src/alerts.js';
 import { isAlternate, normalizeBoard as ppNormalizeBoard } from '../src/adapters/prizepicks.js';
 import { normalizeBoard } from '../src/adapters/betr.js';
@@ -274,7 +275,7 @@ test('books do not leak into one another', () => {
 });
 
 console.log('\nalert rendering');
-test('discord payload carries fighters, lines and a mention', () => {
+test('discord payload carries fighters and lines but never pings', () => {
   const payload = buildDiscordPayload(
     {
       kind: 'fantasy',
@@ -284,9 +285,12 @@ test('discord payload carries fighters, lines and a mention', () => {
         fantasyProp({ fighter: 'Jalin Turner', value: 89.99, startsAt: '2026-08-23T01:40:00Z' }),
       ],
     },
-    { discord: { mention: '@everyone' } }
+    {}
   );
-  assert.match(payload.content, /@everyone/);
+  // No @everyone: each book posts to its own channel and viewers opt into
+  // channel notifications; the bot never mentions anyone.
+  assert.doesNotMatch(payload.content, /@everyone/);
+  assert.deepEqual(payload.allowed_mentions, { parse: [] });
   assert.match(payload.content, /FANTASY PROPS ARE UP/);
   assert.equal(payload.embeds.length, 1, 'one embed per event');
   assert.match(payload.embeds[0].description, /Joel Alvarez/);
@@ -340,28 +344,43 @@ test('a move alert titles as a move, not as a drop', () => {
   assert.doesNotMatch(payload.content, /PROPS ARE UP/);
 });
 
-test('moves post without a ping by default', () => {
-  const payload = buildDiscordPayload(moveAlert(), { discord: { mention: '@everyone' } });
-  assert.doesNotMatch(payload.content, /@everyone/);
+test('each book routes to its own channel webhook, else the main one', () => {
+  const cfg = {
+    discord: {
+      webhookUrl: 'https://hook/main',
+      webhooks: {
+        underdog: 'https://hook/underdog',
+        dksportsbook: 'https://hook/dk',
+      },
+    },
+  };
+  assert.equal(webhookFor(cfg, 'underdog'), 'https://hook/underdog');
+  assert.equal(webhookFor(cfg, 'dksportsbook'), 'https://hook/dk');
+  // A book with no channel mapped falls back to the main webhook.
+  assert.equal(webhookFor(cfg, 'pick6'), 'https://hook/main');
+  // No webhooks map at all: everything uses the main webhook.
+  assert.equal(webhookFor({ discord: { webhookUrl: 'https://hook/main' } }, 'betr'), 'https://hook/main');
+  // Nothing configured: null (dispatch then skips Discord).
+  assert.equal(webhookFor({ discord: {} }, 'betr'), null);
 });
 
-test('moves ping when mentionOnLineMove is enabled', () => {
-  const payload = buildDiscordPayload(moveAlert(), {
-    discord: { mention: '@everyone', mentionOnLineMove: true },
-  });
-  assert.match(payload.content, /@everyone/);
-});
+test('no alert ever pings @everyone - moves and drops alike', () => {
+  // The bot posts each book to its own channel and viewers opt into channel
+  // notifications; nothing it sends is allowed to mention.
+  const move = buildDiscordPayload(moveAlert(), {});
+  assert.doesNotMatch(move.content, /@everyone/);
+  assert.deepEqual(move.allowed_mentions, { parse: [] });
 
-test('a genuine drop still pings', () => {
-  const payload = buildDiscordPayload(
+  const drop = buildDiscordPayload(
     {
       kind: 'fantasy',
       bookMeta: { name: 'Underdog', color: 0, boardUrl: 'https://x' },
       props: [fantasyProp()],
     },
-    { discord: { mention: '@everyone' } }
+    {}
   );
-  assert.match(payload.content, /@everyone/);
+  assert.doesNotMatch(drop.content, /@everyone/);
+  assert.deepEqual(drop.allowed_mentions, { parse: [] });
 });
 
 console.log('\nunderdog watched markets');
@@ -1171,18 +1190,21 @@ test('the fantasy drop still announces as fantasy', () => {
   assert.match(t, /FANTASY PROPS ARE UP/);
 });
 
-test('a watched market opening pings like the drop does', () => {
+test('a watched market opening announces like the drop does', () => {
   // It is still a market opening, and the whole point of watching it is to be
-  // told when it appears - it just gets called by its own name.
+  // told when it appears - it gets the same "ARE UP" headline as a fantasy drop,
+  // just called by its own name. (The ping itself now comes from the viewer's
+  // channel notifications, not an @everyone.)
   const p = buildDiscordPayload(
     {
       kind: 'tracked',
       bookMeta: { name: 'Betr', color: 0, boardUrl: 'https://x' },
       props: [prop({ kind: 'tracked', statLabel: 'Takedowns', value: 1.5 })],
     },
-    { discord: { mention: '@everyone' } }
+    {}
   );
-  assert.match(p.content, /@everyone/);
+  assert.match(p.content, /ARE UP/);
+  assert.doesNotMatch(p.content, /@everyone/);
 });
 
 test('a sig strikes move is not titled a fantasy move', () => {

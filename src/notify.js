@@ -113,13 +113,13 @@ export function buildDiscordPayload(alert, cfg) {
         timestamp: new Date().toISOString(),
       });
     }
-    const mention = cfg.discord?.mention || '';
-    const ping = isDrop || (isMove && cfg.discord?.mentionOnLineMove === true);
     return {
       username: cfg.discord?.username || 'UFC Fantasy Alerts',
-      content: ping && mention ? `${mention} ${title}`.trim() : title,
+      // No @everyone: each book posts to its own channel, and viewers opt into
+      // channel notifications to be pinged that way. The bot never mentions.
+      content: title,
       embeds: embeds.slice(0, 10),
-      allowed_mentions: { parse: ['everyone', 'roles', 'users'] },
+      allowed_mentions: { parse: [] },
     };
   }
 
@@ -156,18 +156,13 @@ export function buildDiscordPayload(alert, cfg) {
     });
   }
 
-  // The drop is the thing worth waking you up for. Line moves are frequent once
-  // a board is live, so they post without a mention unless you ask for one -
-  // an @everyone on every half-point wiggle just gets the channel muted.
-  const mention = cfg.discord?.mention || '';
-  const shouldPing =
-    isDrop || (isMove && cfg.discord?.mentionOnLineMove === true);
-
   return {
     username: cfg.discord?.username || 'UFC Fantasy Alerts',
-    content: shouldPing && mention ? `${mention} ${title}`.trim() : title,
+    // No @everyone: each book posts to its own channel, and viewers opt into
+    // channel notifications to be pinged that way. The bot never mentions.
+    content: title,
     embeds: embeds.slice(0, 10), // Discord caps embeds per message
-    allowed_mentions: { parse: ['everyone', 'roles', 'users'] },
+    allowed_mentions: { parse: [] },
   };
 }
 
