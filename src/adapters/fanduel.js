@@ -7,19 +7,21 @@
 // each wave the moment it lands, so every market is tracked, and so is every
 // selection inside it - a new runner added to an existing market is a drop too.
 //
-// Source: fanduel.boardFile, the same bridge Underdog and Betr use. The page in
-// your own browser fetches its market JSON (event-page / content-managed-page
-// responses); whatever captures those writes them to this file, and the watcher
-// reads it. The file may hold any of:
-//   - one raw FanDuel response object
-//   - an array of them
-//   - { responses: [ { url?, json } | rawResponse, ... ], fights?: [{ url }] }
-// Markets are read out of every `attachments.markets` it can find, so the exact
-// wrapping does not matter.
+// Source: a plain headless Chrome, the way Pick6 is read. It opens the UFC page,
+// then each fight and each of its tabs, and keeps the market JSON those pages
+// fetch for their own display (event-page / content-managed-page). It does NOT
+// disguise itself as a person: if FanDuel refuses an automated browser, this
+// reports that plainly and the heartbeat goes red, rather than trying to get
+// round it.
+//
+// fanduel.boardFile overrides the browser, reading captured FanDuel JSON from a
+// file instead. The file may hold one raw response, an array of them, or
+// { responses: [ { url?, json } | raw, ... ], fights?: [url, ...] }.
 
 import { readFile, stat as statFile } from 'node:fs/promises';
 import { propKey } from '../state.js';
 import { loadConfig } from '../config.js';
+import { browseSession, findBrowser } from '../browser.js';
 
 const BOARD_URL = 'https://sportsbook.fanduel.com/navigation/ufc';
 const BOARD_FILE_MAX_AGE_MS = 30 * 60_000;
@@ -44,7 +46,9 @@ export const meta = {
   name: 'FanDuel Sportsbook',
   color: 0x1493ff,
   boardUrl: BOARD_URL,
-  minIntervalMs: 60_000,
+  // One browser walks every fight and every tab, which takes a few minutes on
+  // a full card; asking more often than this would just stack runs up.
+  minIntervalMs: 300_000,
   // A real sportsbook: no fantasy line will ever post here.
   offersFantasy: false,
 };
@@ -310,37 +314,161 @@ export function normalizeFanDuel(
   return props;
 }
 
+// ------------------------------------------------------------- page scripts
+
+// Responses worth keeping: the page's own market feeds.
+const CAPTURE = /fanduel\.com\/api\/(?:event-page|content-managed-page)/i;
+
+// UFC landing page: every fight link. FanDuel fight URLs end in the numeric
+// event id: /mma/ufc-matches/ciryl-gane-v-josh-hokit-36094809
+export const LIST_SCRIPT = `(async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const links = () => [...document.querySelectorAll('a[href]')]
+    .map(a => a.href.split(/[?#]/)[0])
+    .filter(h => /sportsbook\\.fanduel\\.com\\/(?:mma|ufc)\\/.+-\\d{6,}$/i.test(h));
+  for (let i = 0; i < 40 && !links().length; i++) await sleep(300);
+  let last = -1, stable = 0;
+  for (let i = 0; i < 40 && stable < 3; i++) {
+    window.scrollBy(0, Math.round(window.innerHeight * 0.85));
+    await sleep(350);
+    const n = links().length;
+    stable = n === last ? stable + 1 : 0;
+    last = n;
+  }
+  const text = (document.body?.innerText || '').slice(0, 2000);
+  return { links: [...new Set(links())], text, title: document.title };
+})()`;
+
+// Fight page: the tab bar's titles (Popular, Method of Victory, Round Props,
+// Time Props, and whatever FanDuel adds later), found by anchoring on Popular
+// and reading the other short labels in the same row.
+export const TABS_SCRIPT = `(async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const leaves = () => [...document.querySelectorAll('a,button,span,div,p')]
+    .filter(e => e.children.length === 0 && (e.textContent || '').trim());
+  const anchor = () => leaves().find(e => /^(popular|all)$/i.test(e.textContent.trim()));
+  for (let i = 0; i < 40 && !anchor(); i++) await sleep(300);
+  const a = anchor();
+  if (!a) return [];
+  const top = a.getBoundingClientRect().top;
+  let row = a.parentElement;
+  for (let i = 0; i < 8 && row; i++, row = row.parentElement) {
+    const peers = [...row.querySelectorAll('*')]
+      .filter(e => e.children.length === 0)
+      .filter(e => Math.abs(e.getBoundingClientRect().top - top) < 12)
+      .map(e => (e.textContent || '').trim())
+      .filter(t => t && t.length < 40);
+    if (peers.length >= 2) return [...new Set(peers)];
+  }
+  return [a.textContent.trim()];
+})()`;
+
+/** Click the tab whose visible text is exactly `title`. */
+export const clickTabScript = (title) => `(async () => {
+  const want = ${JSON.stringify(title)}.toLowerCase();
+  const leaf = [...document.querySelectorAll('a,button,span,div,p')]
+    .find(e => e.children.length === 0 && (e.textContent || '').trim().toLowerCase() === want);
+  if (!leaf) return false;
+  (leaf.closest('a,button,[role="tab"],[role="button"]') || leaf).click();
+  await new Promise(r => setTimeout(r, 1800));
+  return true;
+})()`;
+
+/** Tab titles an event-page response lists, if it lists any. */
+export function tabsFromJson(json) {
+  const titles = [];
+  for (const tabs of collect(json, 'tabs')) {
+    for (const t of values(tabs)) {
+      if (t && typeof t.title === 'string' && t.title.trim()) titles.push(t.title.trim());
+    }
+  }
+  return [...new Set(titles)];
+}
+
+// What a refusal looks like. Matched so the error says "blocked" instead of
+// an unhelpful "no fights", never so it can be worked around.
+const BLOCKED = /access denied|unusual (traffic|activity)|are you a robot|verify you are human|captcha|not available in your (location|area)|request blocked/i;
+
+async function readLive(boardUrl) {
+  if (!findBrowser()) throw new Error('FanDuel needs a local Chrome/Edge install');
+
+  return browseSession(
+    async (page) => {
+      await page.goto(boardUrl);
+      const listed = (await page.evaluate(LIST_SCRIPT, 60000)) || {};
+      const fights = (listed.links || []).map((url) => ({ url, eventId: eventIdFromUrl(url) }));
+      await page.settle();
+
+      if (!fights.length && !page.responses.length && BLOCKED.test(`${listed.title} ${listed.text}`)) {
+        throw new Error('FanDuel refused the automated browser (blocked page) - use fanduel.boardFile instead');
+      }
+
+      for (const fight of fights) {
+        const before = page.responses.length;
+        await page.goto(fight.url);
+        await page.settle();
+
+        const fromJson = page.responses.slice(before).flatMap((r) => tabsFromJson(r.json));
+        const fromDom = (await page.evaluate(TABS_SCRIPT, 30000).catch(() => [])) || [];
+        const tabs = [...new Set([...fromJson, ...fromDom])].filter(
+          // Popular is already open; Same Game Parlay repeats the other tabs.
+          (t) => !/^(popular|all)$/i.test(t) && !/same game parlay|^sgp/i.test(t)
+        );
+
+        for (const tab of tabs) {
+          const n = page.responses.length;
+          const clicked = await page.evaluate(clickTabScript(tab), 20000).catch(() => false);
+          await page.settle();
+          // FanDuel also addresses tabs as ?tab=<slug>; use that when the click
+          // did not land or did not fetch anything.
+          if (!clicked || page.responses.length === n) {
+            await page.goto(`${fight.url}?tab=${slug(tab)}`);
+            await page.settle();
+          }
+        }
+      }
+      return { fights, responses: page.responses.map((r) => r.json) };
+    },
+    { capture: CAPTURE }
+  );
+}
+
+async function readBoardFile(boardFile) {
+  let st;
+  try {
+    st = await statFile(boardFile);
+  } catch {
+    throw new Error(`FanDuel board file not found: ${boardFile}`);
+  }
+  const ageMs = Date.now() - st.mtimeMs;
+  if (ageMs > BOARD_FILE_MAX_AGE_MS) {
+    throw new Error(`FanDuel board file is stale (${Math.round(ageMs / 60000)}m old)`);
+  }
+  return normalizeBoardFile(JSON.parse((await readFile(boardFile, 'utf8')).replace(/^﻿/, '')));
+}
+
 // ------------------------------------------------------------------- fetch
 
 export async function fetchProps() {
   const cfg = await loadConfig().catch(() => ({}));
   const fd = cfg.fanduel || {};
   const boardFile = String(fd.boardFile || '').trim();
-  if (!boardFile) {
-    throw new Error('FanDuel needs fanduel.boardFile in config.json - see README');
-  }
 
-  let st;
-  try {
-    st = await statFile(boardFile);
-  } catch {
-    throw new Error(`FanDuel board file not found: ${boardFile} - is the capture writing it?`);
-  }
-  const ageMs = Date.now() - st.mtimeMs;
-  if (ageMs > BOARD_FILE_MAX_AGE_MS) {
-    throw new Error(
-      `FanDuel board file is stale (${Math.round(ageMs / 60000)}m old) - the capture has not run recently`
-    );
-  }
+  const { responses, fights } = boardFile
+    ? await readBoardFile(boardFile)
+    : await readLive(fd.boardUrl || BOARD_URL);
 
-  const raw = JSON.parse((await readFile(boardFile, 'utf8')).replace(/^﻿/, ''));
-  const { responses, fights } = normalizeBoardFile(raw);
+  if (!fights.length && !responses.length) {
+    throw new Error('FanDuel: UFC page showed no fights and no market data - page changed or blocked?');
+  }
   const highlight = Array.isArray(fd.highlight) && fd.highlight.length ? fd.highlight : DEFAULT_HIGHLIGHT;
   const oddsMarkets =
     Array.isArray(fd.oddsMarkets) && fd.oddsMarkets.length ? fd.oddsMarkets : DEFAULT_ODDS_MARKETS;
   const props = normalizeFanDuel(responses, fights, { highlight, oddsMarkets });
-  if (!props.length && responses.length) {
-    throw new Error('FanDuel board file has no UFC markets in it - capture shape changed?');
+  if (!props.length && (fights.length || responses.length)) {
+    throw new Error(
+      `FanDuel: ${fights.length} fight(s) and ${responses.length} response(s) but no UFC markets read - feed shape changed?`
+    );
   }
   return props;
 }

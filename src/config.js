@@ -21,16 +21,15 @@ const DEFAULTS = {
   alertOnLineMove: true,
   lineMoveMinDelta: 0,
   alertOnFirstRun: false,
-  // FanDuel stays off until fanduel.boardFile is set, so an upgrade does not
-  // start a book that has nothing to read and paint the heartbeat red.
-  books: { underdog: true, prizepicks: true, betr: true, pick6: true, fanduel: false },
+  books: { underdog: true, prizepicks: true, betr: true, pick6: true },
   // Betr closed its GraphQL endpoint to anonymous callers on 2026-09-07: the
   // gateway answers 401 before any query runs, so there is no query shape or
   // header that gets in. Paste a bearer token here and the adapter sends it.
   // Read fresh every poll, so a token can be added without a restart.
   betr: { authToken: '' },
-  // FanDuel Sportsbook reads the market JSON your own browser fetched, written
-  // to this file. highlight: market names (regex) that get a star when they post.
+  // FanDuel Sportsbook is read by a plain headless Chrome; boardFile, when set,
+  // reads captured JSON from a file instead. highlight: market names (regex)
+  // that get a star when they post.
   // Line moves (Total Rounds 2.5 -> 1.5) and big moneyline swings alert here
   // even when the global alertOnLineMove is off.
   fanduel: {
