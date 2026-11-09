@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // UFC prop alerts: fantasy points on Underdog, PrizePicks, Betr and DK Pick6,
 // plus tracked over/under markets on the DraftKings Sportsbook and every UFC
-// market FanDuel Sportsbook posts.
+// market FanDuel Sportsbook posts, and BetMGM's point deduction prop.
 
 import { join } from 'node:path';
 import { loadConfig, inQuietHours, webhookFor, ROOT } from './config.js';
@@ -19,8 +19,9 @@ import * as betr from './adapters/betr.js';
 import * as pick6 from './adapters/pick6.js';
 import * as dksportsbook from './adapters/dksportsbook.js';
 import * as fanduel from './adapters/fanduel.js';
+import * as betmgm from './adapters/betmgm.js';
 
-const ADAPTERS = [underdog, prizepicks, betr, pick6, dksportsbook, fanduel];
+const ADAPTERS = [underdog, prizepicks, betr, pick6, dksportsbook, fanduel, betmgm];
 const STATE_PATH = join(ROOT, 'state.json');
 const LOCK_PATH = join(ROOT, 'watcher.lock');
 const LOG_PATH = join(ROOT, 'watcher.log');
@@ -166,7 +167,11 @@ async function pollOne(adapter, state, cfg) {
   }
 }
 
+// --book=<key> narrows --status / --once to one book, e.g. --status --book=betmgm.
+const ONLY_BOOK = [...args].find((a) => a.startsWith('--book='))?.slice(7).toLowerCase() || null;
+
 function activeAdapters(cfg) {
+  if (ONLY_BOOK) return ADAPTERS.filter((a) => a.meta.key === ONLY_BOOK);
   return ADAPTERS.filter((a) => cfg.books[a.meta.key] !== false);
 }
 
