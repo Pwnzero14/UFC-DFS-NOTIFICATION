@@ -34,6 +34,11 @@ export const DEFAULT_HIGHLIGHT = [
   '60 seconds|gone in|under time',
 ];
 
+// Head-to-head markets whose prices are worth watching: a favorite flipping to
+// underdog, or a slight favorite turning into a heavy one. Overridable with
+// fanduel.oddsMarkets in config.json (strings, read as case-insensitive regex).
+export const DEFAULT_ODDS_MARKETS = ['^moneyline$', '^fight (winner|result)$', '^to win'];
+
 export const meta = {
   key: 'fanduel',
   name: 'FanDuel Sportsbook',
@@ -86,6 +91,12 @@ function collect(node, key, out = [], depth = 0) {
 }
 
 const values = (v) => (Array.isArray(v) ? v : v && typeof v === 'object' ? Object.values(v) : []);
+
+function americanOddsNum(runner) {
+  const a = runner?.winRunnerOdds?.americanDisplayOdds;
+  const n = Number(a?.americanOddsInt ?? a?.americanOdds ?? runner?.winRunnerOdds?.americanOdds);
+  return Number.isFinite(n) && n !== 0 ? n : null;
+}
 
 function americanOdds(runner) {
   const a = runner?.winRunnerOdds?.americanDisplayOdds;
@@ -140,9 +151,15 @@ export function normalizeBoardFile(raw) {
  * belongs to a fight page listed in `fights`. Anything else in the capture -
  * a promo carousel for another sport, say - is ignored.
  */
-export function normalizeFanDuel(responses, fights = [], { highlight = DEFAULT_HIGHLIGHT } = {}) {
+export function normalizeFanDuel(
+  responses,
+  fights = [],
+  { highlight = DEFAULT_HIGHLIGHT, oddsMarkets = DEFAULT_ODDS_MARKETS } = {}
+) {
   const starRes = highlight.map((h) => new RegExp(h, 'i'));
   const starred = (label) => starRes.some((re) => re.test(label));
+  const oddsRes = oddsMarkets.map((h) => new RegExp(h, 'i'));
+  const watchesOdds = (name) => oddsRes.some((re) => re.test(name));
 
   const fightById = new Map(fights.filter((f) => f.eventId).map((f) => [String(f.eventId), f]));
 
@@ -198,6 +215,7 @@ export function normalizeFanDuel(responses, fights = [], { highlight = DEFAULT_H
               runnerName: String(run.runnerName).trim(),
               id,
               odds: americanOdds(run),
+              price: americanOddsNum(run),
             });
           }
         }
@@ -241,7 +259,31 @@ export function normalizeFanDuel(responses, fights = [], { highlight = DEFAULT_H
       props.push(market);
 
       const parentKey = propKey(market);
+      // A two-way moneyline: each fighter's price is watched for big swings.
+      const priced = runners.length === 2 && watchesOdds(mk.name);
       for (const r of runners) {
+        if (priced && r.price != null) {
+          props.push({
+            book: meta.key,
+            id: `${eventId}|${mk.name}|${r.id}`.toLowerCase(),
+            event,
+            fighter: r.runnerName,
+            statLabel: mk.name,
+            statKey: `${slug(mk.name)}::${slug(r.id)}`,
+            kind: 'tracked',
+            // American odds. Every tick is recorded, but only a swing that
+            // matters alerts - see oddsMoveIsMajor in alerts.js.
+            value: r.price,
+            unit: 'odds',
+            status: 'open',
+            startsAt,
+            url,
+            note: r.odds,
+            starred: false,
+            parentKey,
+          });
+          continue;
+        }
         props.push({
           book: meta.key,
           id: `${eventId}|${mk.name}|${r.id}`.toLowerCase(),
@@ -294,7 +336,9 @@ export async function fetchProps() {
   const raw = JSON.parse((await readFile(boardFile, 'utf8')).replace(/^﻿/, ''));
   const { responses, fights } = normalizeBoardFile(raw);
   const highlight = Array.isArray(fd.highlight) && fd.highlight.length ? fd.highlight : DEFAULT_HIGHLIGHT;
-  const props = normalizeFanDuel(responses, fights, { highlight });
+  const oddsMarkets =
+    Array.isArray(fd.oddsMarkets) && fd.oddsMarkets.length ? fd.oddsMarkets : DEFAULT_ODDS_MARKETS;
+  const props = normalizeFanDuel(responses, fights, { highlight, oddsMarkets });
   if (!props.length && responses.length) {
     throw new Error('FanDuel board file has no UFC markets in it - capture shape changed?');
   }

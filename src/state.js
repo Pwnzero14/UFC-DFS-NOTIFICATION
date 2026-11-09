@@ -92,6 +92,16 @@ export function diff(state, book, props) {
 
     if (!prior) {
       newProps.push(prop);
+    } else if (prop.unit === 'odds') {
+      // Prices tick constantly, so a price is compared against the last one
+      // that was reported (its anchor), not the last one polled. Otherwise a
+      // slow drift from -150 to -400 over a day never looks like a move at
+      // all. buildAlerts moves the anchor up when it reports a swing.
+      const anchor = prior.anchor ?? prior.value;
+      fresh[key].anchor = anchor;
+      if (anchor != null && prop.value != null && anchor !== prop.value) {
+        moved.push({ ...prop, previousValue: anchor });
+      }
     } else if (
       ALERTING_KINDS.has(prop.kind) &&
       prior.value != null &&

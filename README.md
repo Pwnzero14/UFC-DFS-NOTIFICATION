@@ -238,7 +238,22 @@ takedowns, significant strikes) closer to the card. So nothing is filtered here:
 | A new selection is added to a market already up | 🚨 that selection alone |
 | A whole new fight posts | 🚨 its markets (selections are not listed separately) |
 | An O/U market's line moves (Total Rounds 2.5 → 1.5) | 📈 move |
-| Odds change | nothing - prices move constantly |
+| A favorite flips to underdog, or the other way | 💰 moneyline swing |
+| A fighter changes tier (slight → favorite → big → huge favorite) | 💰 moneyline swing |
+| A moneyline moves 10+ points of implied probability | 💰 moneyline swing |
+| Small odds ticks, and prices on non-moneyline markets | nothing |
+
+Moneyline prices are compared with the last price that was *reported*, not the last
+one polled, so a slow drift from -160 to -300 over a day is caught once it adds up.
+Flips and tier changes also need a couple of points of real movement, so a price
+wobbling between -148 and -152 does not ping every tick. Tiers: slight favorite
+(-100 to -149), favorite (-150 to -249), big (-250 to -499), huge (-500 and beyond),
+mirrored for underdogs.
+
+FanDuel line moves and swings alert even when the global `alertOnLineMove` is off.
+Tune them under `fanduel` in config.json: `alertOnLineMove`, `alertOnOddsMove`,
+`oddsMoveMinPct` (default 10) and `oddsMarkets` (which markets' prices to watch,
+default the moneyline).
 
 Markets matching `fanduel.highlight` get a ⭐ in the title and on the line. The default
 list covers knockdowns, takedowns, significant strikes and the 60-second market; add

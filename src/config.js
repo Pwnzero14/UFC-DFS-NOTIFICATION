@@ -31,7 +31,16 @@ const DEFAULTS = {
   betr: { authToken: '' },
   // FanDuel Sportsbook reads the market JSON your own browser fetched, written
   // to this file. highlight: market names (regex) that get a star when they post.
-  fanduel: { boardFile: '', highlight: [] },
+  // Line moves (Total Rounds 2.5 -> 1.5) and big moneyline swings alert here
+  // even when the global alertOnLineMove is off.
+  fanduel: {
+    boardFile: '',
+    highlight: [],
+    alertOnLineMove: true,
+    alertOnOddsMove: true,
+    oddsMoveMinPct: 10,
+    oddsMarkets: [],
+  },
   quietHours: { enabled: false, startHour: 2, endHour: 8 },
   heartbeat: { enabled: true, everyHours: 12 },
 };

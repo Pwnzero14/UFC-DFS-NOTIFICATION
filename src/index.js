@@ -64,7 +64,11 @@ async function dispatch(alert, cfg) {
     const headline =
       alert.kind === 'fantasy'
         ? `${alert.bookMeta.name}: UFC FANTASY PROPS UP`
-        : `${alert.bookMeta.name}: new UFC market`;
+        : alert.kind === 'odds'
+          ? `${alert.bookMeta.name}: big moneyline move`
+          : alert.kind === 'move'
+            ? `${alert.bookMeta.name}: line move`
+            : `${alert.bookMeta.name}: new UFC market`;
     const body = alert.props
       .slice(0, 3)
       .map((p) => `${p.fighter || 'market'} ${p.statLabel} ${p.value ?? ''}`.trim())

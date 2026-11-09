@@ -54,6 +54,14 @@
       "takedown",
       "sig(nificant)?\\.? ?strike",
       "60 seconds|gone in|under time"
+    ],
+    "alertOnLineMove": true,
+    "alertOnOddsMove": true,
+    "oddsMoveMinPct": 10,
+    "oddsMarkets": [
+      "^moneyline$",
+      "^fight (winner|result)$",
+      "^to win"
     ]
   }
 }

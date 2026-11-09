@@ -17,7 +17,13 @@ const asClock = (secs) => {
   return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
 };
 
-const shown = (p, v) => (p?.unit === 'time' ? asClock(v) : fmt(v));
+const asOdds = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? (n > 0 ? `+${n}` : String(n)) : fmt(v);
+};
+
+const shown = (p, v) =>
+  p?.unit === 'time' ? asClock(v) : p?.unit === 'odds' ? asOdds(v) : fmt(v);
 
 function fightTime(iso) {
   if (!iso) return null;
@@ -39,7 +45,10 @@ function groupByEvent(props) {
 }
 
 /** "+2.51" / "-1.00" with a direction arrow. Time markets read in seconds. */
-export function moveDelta(from, to, unit) {
+export function moveDelta(from, to, unit, swing) {
+  // Odds read as what changed about the fighter, not as a raw number: -150 to
+  // -300 is "+150" in odds but means a slight favorite became a big one.
+  if (unit === 'odds') return swing ? `🔄 ${swing}` : '';
   const d = Number(to) - Number(from);
   const arrow = d > 0 ? '🔺' : '🔻';
   const sign = d > 0 ? '+' : '';
@@ -55,6 +64,7 @@ export function buildDiscordPayload(alert, cfg) {
   // differ only in what they get called.
   const isDrop = kind === 'fantasy' || kind === 'tracked';
   const isMove = kind === 'move';
+  const isOdds = kind === 'odds';
 
   // Name the actual market: "FANTASY PROPS" is wrong for a sportsbook O/U, and
   // wrong for a takedown line. Alerts arrive split by market family, so these
@@ -79,7 +89,9 @@ export function buildDiscordPayload(alert, cfg) {
   // A market the user named as one they are waiting on gets a star, in the
   // title as well as on its line, so it stands out from a routine wave.
   const star = props.some((p) => p.starred) ? '⭐ ' : '';
-  const title = isDrop
+  const title = isOdds
+    ? `💰 ${bookMeta.name} — big moneyline ${props.length === 1 ? 'move' : 'moves'}`
+    : isDrop
     ? `${star}🚨 ${bookMeta.name} — UFC ${marketName} ARE UP`
     : isMove
       ? `📈 ${bookMeta.name} — ${movedMarket ? `${movedMarket} ` : ''}line ${props.length === 1 ? 'move' : 'moves'}`
@@ -111,7 +123,7 @@ export function buildDiscordPayload(alert, cfg) {
             }
             const who = `${mark}${p.fighter ? `**${p.fighter}**` : '*(market)*'}`;
             return p.previousValue != null && p.value != null
-              ? `${who} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit)}`
+              ? `${who} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit, p.swing)}`
               : `${who} — \`${shown(p, p.value)}\``;
           })
           .join('\n'),
@@ -146,11 +158,14 @@ export function buildDiscordPayload(alert, cfg) {
       // A market described in words rather than one number: a Pick6 tab whose
       // values the book won't serve, or a sportsbook market and its prices.
       // A move still renders as a move, with both values.
-      if (p.note && p.previousValue == null) return `${mark}**${p.statLabel}** — ${p.note}`;
+      if (p.note && p.previousValue == null) {
+        const where = p.fighter ? `**${p.fighter}** — ` : '';
+        return `${mark}${where}**${p.statLabel}** — ${p.note}`;
+      }
 
       const who = `${mark}${p.fighter ? `**${p.fighter}**` : '*(market opened)*'}`;
       if (p.previousValue != null && p.value != null) {
-        return `${who} — ${p.statLabel} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit)}`;
+        return `${who} — ${p.statLabel} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit, p.swing)}`;
       }
       return `${who} — ${p.statLabel} \`${shown(p, p.value)}\``;
     });
@@ -384,6 +399,7 @@ const TAGS = {
   // A watched market opening is a drop too, just not the one being waited for.
   tracked: '\x1b[45m\x1b[30m MARKET  \x1b[0m',
   move: '\x1b[46m\x1b[30m  MOVE   \x1b[0m',
+  odds: '\x1b[44m\x1b[37m  ODDS   \x1b[0m',
   unknown: '\x1b[43m\x1b[30m NEW STAT \x1b[0m',
 };
 
