@@ -27,6 +27,19 @@ const DEFAULTS = {
   // header that gets in. Paste a bearer token here and the adapter sends it.
   // Read fresh every poll, so a token can be added without a restart.
   betr: { authToken: '' },
+  // FanDuel Sportsbook is read by a plain headless Chrome; boardFile, when set,
+  // reads captured JSON from a file instead. highlight: market names (regex)
+  // that get a star when they post.
+  // Line moves (Total Rounds 2.5 -> 1.5) and big moneyline swings alert here
+  // even when the global alertOnLineMove is off.
+  fanduel: {
+    boardFile: '',
+    highlight: [],
+    alertOnLineMove: true,
+    alertOnOddsMove: true,
+    oddsMoveMinPct: 10,
+    oddsMarkets: [],
+  },
   quietHours: { enabled: false, startHour: 2, endHour: 8 },
   heartbeat: { enabled: true, everyHours: 12 },
 };
@@ -48,6 +61,7 @@ export async function loadConfig() {
     discord: { ...DEFAULTS.discord, ...(raw.discord || {}) },
     books: { ...DEFAULTS.books, ...(raw.books || {}) },
     betr: { ...DEFAULTS.betr, ...(raw.betr || {}) },
+    fanduel: { ...DEFAULTS.fanduel, ...(raw.fanduel || {}) },
     quietHours: { ...DEFAULTS.quietHours, ...(raw.quietHours || {}) },
     heartbeat: { ...DEFAULTS.heartbeat, ...(raw.heartbeat || {}) },
     _path: path,

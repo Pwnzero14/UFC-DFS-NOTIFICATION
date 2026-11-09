@@ -144,6 +144,8 @@ harmlessly to a no-op with Discord still working.
 | `discord.mentionOnLineMove` | `true` | Whether line moves ping as well as post |
 | `alertOnFirstRun` | `false` | Alert on the initial baseline sweep |
 | `books.*` | `true` | Turn individual books off |
+| `fanduel.boardFile` | `""` | Read captured FanDuel JSON from this file instead of the browser |
+| `fanduel.highlight` | see example | Market names (regex) that get a ⭐ |
 | `quietHours` | off | Suppress desktop toasts in a time window (Discord still posts) |
 | `heartbeat.enabled` | `true` | Post a periodic "still alive" status to Discord |
 | `heartbeat.everyHours` | `12` | How often that status posts |
@@ -221,6 +223,53 @@ Set `alertOnUnknownStat: false` once fantasy has dropped and you've seen it work
 | PrizePicks | `partner-api.prizepicks.com/projections?league_id=12` | none | 12 = UFC. Fantasy stat is `Fantasy Score` |
 | Betr | `api.fantasy.betr.app/graphql` | none | Two-stage: list UFC events, then projections per event |
 | Pick6 | `pick6.draftkings.com/?sport=UFC` | none | No JSON API; the SSR HTML is parsed |
+| FanDuel Sportsbook | `sportsbook.fanduel.com/navigation/ufc` | none | Headless Chrome walks every fight and tab, reads the page's market JSON |
+
+### FanDuel Sportsbook: every market, as it drops
+
+FanDuel posts a fight's markets in waves - moneyline, method, distance and rounds
+first, then specials ("Under Time / Gone in 60 Seconds") and stat props (knockdowns,
+takedowns, significant strikes) closer to the card. So nothing is filtered here:
+**every market is tracked, and so is every selection inside it.**
+
+| What happens | Alert |
+|---|---|
+| A new market posts on any fight | 🚨 one line per market, with its prices |
+| A new selection is added to a market already up | 🚨 that selection alone |
+| A whole new fight posts | 🚨 its markets (selections are not listed separately) |
+| An O/U market's line moves (Total Rounds 2.5 → 1.5) | 📈 move |
+| A favorite flips to underdog, or the other way | 💰 moneyline swing |
+| A fighter changes tier (slight → favorite → big → huge favorite) | 💰 moneyline swing |
+| A moneyline moves 10+ points of implied probability | 💰 moneyline swing |
+| Small odds ticks, and prices on non-moneyline markets | nothing |
+
+Moneyline prices are compared with the last price that was *reported*, not the last
+one polled, so a slow drift from -160 to -300 over a day is caught once it adds up.
+Flips and tier changes also need a couple of points of real movement, so a price
+wobbling between -148 and -152 does not ping every tick. Tiers: slight favorite
+(-100 to -149), favorite (-150 to -249), big (-250 to -499), huge (-500 and beyond),
+mirrored for underdogs.
+
+FanDuel line moves and swings alert even when the global `alertOnLineMove` is off.
+Tune them under `fanduel` in config.json: `alertOnLineMove`, `alertOnOddsMove`,
+`oddsMoveMinPct` (default 10) and `oddsMarkets` (which markets' prices to watch,
+default the moneyline).
+
+Markets matching `fanduel.highlight` get a ⭐ in the title and on the line. The default
+list covers knockdowns, takedowns, significant strikes and the 60-second market; add
+your own as regex strings.
+
+**Source.** A plain headless Chrome on this PC, the way Pick6 is read: it opens the
+UFC page, then every fight and every tab on it (Method of Victory, Round Props, Time
+Props, and any tab FanDuel adds later), and reads the market JSON those pages load. A
+full card takes a few minutes, so FanDuel is polled every 5 minutes. It needs Chrome or
+Edge installed and runs with just the watcher on.
+
+Unlike the DraftKings adapter it does **not** disguise itself. If FanDuel refuses an
+automated browser, the log says so, the heartbeat marks FanDuel 🔴, and the other books
+carry on. The fallback is `fanduel.boardFile`: point it at captured FanDuel JSON (one
+raw response, an array of them, or `{ "responses": [...], "fights": [url, ...] }`) and
+the browser is skipped. A file older than 30 minutes is reported as stale.
 
 ### Things worth knowing
 
@@ -257,7 +306,7 @@ src/
   fantasy.js            fantasy matching + known-stat lists
   notify.js             console / Discord / Windows toast
   adapters/
-    underdog.js  prizepicks.js  betr.js  pick6.js
+    underdog.js  prizepicks.js  betr.js  pick6.js  dksportsbook.js  fanduel.js
   lock.js               single-instance PID lock
 test/detection.test.js  30 tests, no network
 start-hidden.vbs        launches the watcher with no console window

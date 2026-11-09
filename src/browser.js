@@ -47,6 +47,7 @@ function makeClient(ws) {
   let nextId = 1;
   const pending = new Map();
   const waiters = [];
+  const listeners = new Map(); // method -> [callback]
 
   ws.addEventListener('message', (ev) => {
     let msg;
@@ -62,6 +63,9 @@ function makeClient(ws) {
       return;
     }
     if (msg.method) {
+      for (const cb of listeners.get(msg.method) || []) {
+        try { cb(msg.params); } catch { /* a listener must not kill the socket */ }
+      }
       for (let i = waiters.length - 1; i >= 0; i--) {
         if (waiters[i].method === msg.method) {
           waiters[i].resolve(msg.params);
@@ -97,22 +101,23 @@ function makeClient(ws) {
       }, timeoutMs);
     });
 
-  return { send, once };
+  const on = (method, cb) => {
+    if (!listeners.has(method)) listeners.set(method, []);
+    listeners.get(method).push(cb);
+  };
+
+  return { send, once, on };
 }
 
-/**
- * Load `url` in headless Chrome, run `pageFunction` (an IIFE source string that
- * may await), and return its value. Always tears the browser down.
- */
 const REAL_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-export async function evaluateOnPage(
-  url,
-  pageFunction,
-  { timeoutMs = 60000, stealth = false } = {}
-) {
+/**
+ * Start headless Chrome and open one blank tab on it. Returns the CDP client
+ * plus a cleanup that always tears the browser and its profile down.
+ */
+async function openSession({ stealth = false } = {}) {
   const bin = findBrowser();
   if (!bin) throw new Error('no Chrome/Edge install found');
 
@@ -176,13 +181,13 @@ export async function evaluateOnPage(
       setTimeout(() => reject(new Error('CDP socket timeout')), 15000);
     });
 
-    const { send, once } = makeClient(ws);
-    await send('Page.enable');
-    await send('Runtime.enable');
+    const client = makeClient(ws);
+    await client.send('Page.enable');
+    await client.send('Runtime.enable');
 
     if (stealth) {
       // navigator.webdriver is the first thing bot checks look at.
-      await send('Page.addScriptToEvaluateOnNewDocument', {
+      await client.send('Page.addScriptToEvaluateOnNewDocument', {
         source: `
           Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
           Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
@@ -192,37 +197,121 @@ export async function evaluateOnPage(
       }).catch(() => {});
     }
 
-    const loaded = once('Page.loadEventFired', 45000);
-    await send('Page.navigate', { url });
-    await loaded.catch(() => {}); // proceed on timeout; the script polls anyway
-    await sleep(1200); // let the SPA hydrate before touching the DOM
-
-    // A site that redirects after load (Betr bounces logged-out visitors) tears
-    // down the execution context mid-evaluate. Settle and try once more against
-    // wherever it ended up rather than failing the whole poll.
-    let result;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        result = await send(
-          'Runtime.evaluate',
-          { expression: pageFunction, awaitPromise: true, returnByValue: true },
-          timeoutMs
-        );
-        break;
-      } catch (err) {
-        const transient = /navigated or closed|context was destroyed/i.test(err.message);
-        if (!transient || attempt === 1) throw err;
-        await sleep(3000);
-      }
-    }
-
-    if (result.exceptionDetails) {
-      throw new Error(
-        `page script threw: ${result.exceptionDetails.exception?.description || 'unknown'}`
-      );
-    }
-    return result.result?.value;
-  } finally {
+    return { ...client, cleanup };
+  } catch (err) {
     await cleanup();
+    throw err;
+  }
+}
+
+async function navigate({ send, once }, url) {
+  const loaded = once('Page.loadEventFired', 45000);
+  await send('Page.navigate', { url });
+  await loaded.catch(() => {}); // proceed on timeout; the script polls anyway
+  await sleep(1200); // let the SPA hydrate before touching the DOM
+}
+
+async function evaluate({ send }, expression, timeoutMs) {
+  // A site that redirects after load (Betr bounces logged-out visitors) tears
+  // down the execution context mid-evaluate. Settle and try once more against
+  // wherever it ended up rather than failing the whole poll.
+  let result;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      result = await send(
+        'Runtime.evaluate',
+        { expression, awaitPromise: true, returnByValue: true },
+        timeoutMs
+      );
+      break;
+    } catch (err) {
+      const transient = /navigated or closed|context was destroyed/i.test(err.message);
+      if (!transient || attempt === 1) throw err;
+      await sleep(3000);
+    }
+  }
+
+  if (result.exceptionDetails) {
+    throw new Error(
+      `page script threw: ${result.exceptionDetails.exception?.description || 'unknown'}`
+    );
+  }
+  return result.result?.value;
+}
+
+/**
+ * Load `url` in headless Chrome, run `pageFunction` (an IIFE source string that
+ * may await), and return its value. Always tears the browser down.
+ */
+export async function evaluateOnPage(
+  url,
+  pageFunction,
+  { timeoutMs = 60000, stealth = false } = {}
+) {
+  const session = await openSession({ stealth });
+  try {
+    await navigate(session, url);
+    return await evaluate(session, pageFunction, timeoutMs);
+  } finally {
+    await session.cleanup();
+  }
+}
+
+/**
+ * Drive one plain headless browser across several pages and keep the JSON the
+ * pages fetch for their own display.
+ *
+ * Some books paint their board from JSON the page requests itself, and that
+ * JSON is far more reliable to read than the obfuscated DOM it lands in. This
+ * records every response whose URL matches `capture` while `fn` runs.
+ *
+ * `fn` receives { goto(url), evaluate(src, timeoutMs), settle(), responses },
+ * where `responses` is the live array of { url, json } captured so far.
+ */
+export async function browseSession(fn, { capture } = {}) {
+  const session = await openSession();
+  const responses = [];
+  const wanted = new Map(); // requestId -> url
+  const inflight = new Set();
+
+  try {
+    await session.send('Network.enable', {
+      maxTotalBufferSize: 100_000_000,
+      maxResourceBufferSize: 20_000_000,
+    });
+    session.on('Network.responseReceived', (p) => {
+      if (capture?.test(p.response?.url || '')) wanted.set(p.requestId, p.response.url);
+    });
+    session.on('Network.loadingFinished', (p) => {
+      const url = wanted.get(p.requestId);
+      if (!url) return;
+      wanted.delete(p.requestId);
+      const job = session
+        .send('Network.getResponseBody', { requestId: p.requestId })
+        .then(({ body, base64Encoded }) => {
+          const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body;
+          responses.push({ url, json: JSON.parse(text) });
+        })
+        .catch(() => { /* not JSON, or evicted - nothing to keep */ })
+        .finally(() => inflight.delete(job));
+      inflight.add(job);
+    });
+
+    // Wait until every captured body that has finished loading has been read.
+    const settle = async () => {
+      await sleep(300);
+      while (inflight.size) await Promise.allSettled([...inflight]);
+    };
+
+    const value = await fn({
+      goto: (url) => navigate(session, url),
+      evaluate: (src, timeoutMs = 60000) => evaluate(session, src, timeoutMs),
+      settle,
+      responses,
+    });
+    await settle();
+    return value;
+  } finally {
+    await session.cleanup();
   }
 }

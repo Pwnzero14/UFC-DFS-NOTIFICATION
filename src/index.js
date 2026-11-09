@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // UFC prop alerts: fantasy points on Underdog, PrizePicks, Betr and DK Pick6,
-// plus tracked over/under markets on the DraftKings Sportsbook.
+// plus tracked over/under markets on the DraftKings Sportsbook and every UFC
+// market FanDuel Sportsbook posts.
 
 import { join } from 'node:path';
 import { loadConfig, inQuietHours, webhookFor, ROOT } from './config.js';
@@ -17,8 +18,9 @@ import * as prizepicks from './adapters/prizepicks.js';
 import * as betr from './adapters/betr.js';
 import * as pick6 from './adapters/pick6.js';
 import * as dksportsbook from './adapters/dksportsbook.js';
+import * as fanduel from './adapters/fanduel.js';
 
-const ADAPTERS = [underdog, prizepicks, betr, pick6, dksportsbook];
+const ADAPTERS = [underdog, prizepicks, betr, pick6, dksportsbook, fanduel];
 const STATE_PATH = join(ROOT, 'state.json');
 const LOCK_PATH = join(ROOT, 'watcher.lock');
 const LOG_PATH = join(ROOT, 'watcher.log');
@@ -62,7 +64,11 @@ async function dispatch(alert, cfg) {
     const headline =
       alert.kind === 'fantasy'
         ? `${alert.bookMeta.name}: UFC FANTASY PROPS UP`
-        : `${alert.bookMeta.name}: new UFC market`;
+        : alert.kind === 'odds'
+          ? `${alert.bookMeta.name}: big moneyline move`
+          : alert.kind === 'move'
+            ? `${alert.bookMeta.name}: line move`
+            : `${alert.bookMeta.name}: new UFC market`;
     const body = alert.props
       .slice(0, 3)
       .map((p) => `${p.fighter || 'market'} ${p.statLabel} ${p.value ?? ''}`.trim())

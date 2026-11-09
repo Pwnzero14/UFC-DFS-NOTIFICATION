@@ -6,7 +6,7 @@ import * as store from '../src/state.js';
 import { classify, marketKey, demoteToKnown } from '../src/fantasy.js';
 import { blackoutSince } from '../src/blackout.js';
 import { webhookFor } from '../src/config.js';
-import { buildAlerts, moveThreshold } from '../src/alerts.js';
+import { buildAlerts, moveThreshold, oddsMoveIsMajor, oddsTier } from '../src/alerts.js';
 import { isAlternate, normalizeBoard as ppNormalizeBoard } from '../src/adapters/prizepicks.js';
 import { normalizeBoard } from '../src/adapters/betr.js';
 import { normalizeUnderdogBoard } from '../src/adapters/underdog.js';
@@ -18,6 +18,12 @@ import {
   humanDuration,
 } from '../src/notify.js';
 import { BROWSER_SCRIPT, boundedValue } from '../src/adapters/pick6.js';
+import {
+  normalizeFanDuel,
+  normalizeBoardFile as fdNormalizeBoardFile,
+  eventIdFromUrl,
+  meta as fdMeta,
+} from '../src/adapters/fanduel.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -1345,6 +1351,245 @@ test('underdog board-file fallback accepts the analyzer shapes', () => {
   assert.deepEqual(normalizeUnderdogBoard({ fighters: fs }), fs);
   assert.deepEqual(normalizeUnderdogBoard(fs), fs);
   assert.throws(() => normalizeUnderdogBoard({ nope: 1 }), /no fighters array/);
+});
+
+// ------------------------------------------------------- FanDuel Sportsbook
+
+const FD_URL = 'https://sportsbook.fanduel.com/mma/ufc-matches/ciryl-gane-v-josh-hokit-36094809';
+const fdRunner = (runnerName, odds, extra = {}) => ({
+  selectionId: Math.floor(Math.random() * 1e9),
+  runnerName,
+  handicap: 0,
+  runnerStatus: 'ACTIVE',
+  winRunnerOdds: { americanDisplayOdds: { americanOddsInt: odds } },
+  ...extra,
+});
+const fdMarket = (marketName, runners, extra = {}) => ({
+  marketId: `1.${Math.floor(Math.random() * 1e9)}`,
+  eventId: 36094809,
+  marketName,
+  marketStatus: 'OPEN',
+  runners,
+  ...extra,
+});
+const fdPage = (markets) => ({
+  attachments: {
+    events: { 36094809: { eventId: 36094809, name: 'Ciryl Gane v Josh Hokit', eventTypeId: 26420387, openDate: '2026-11-15T04:30:00.000Z' } },
+    markets: Object.fromEntries(markets.map((m) => [m.marketId, m])),
+  },
+});
+const FD_FIGHTS = [{ url: FD_URL, eventId: '36094809' }];
+const fdBase = () => [
+  fdMarket('Moneyline', [fdRunner('Ciryl Gane', -245), fdRunner('Josh Hokit', 186)]),
+  fdMarket('Total Rounds', [fdRunner('Over', -150, { handicap: 2.5 }), fdRunner('Under', 120, { handicap: 2.5 })]),
+  fdMarket('Will the fight go the distance?', [fdRunner('Yes', 250), fdRunner('No', -350)]),
+];
+
+test('fanduel event id is read off the fight URL', () => {
+  assert.equal(eventIdFromUrl(FD_URL), '36094809');
+  assert.equal(eventIdFromUrl(`${FD_URL}?tab=time-props`), '36094809');
+  assert.equal(eventIdFromUrl('https://sportsbook.fanduel.com/navigation/ufc'), null);
+});
+
+test('fanduel reports one prop per market and per selection, all tracked', () => {
+  const props = normalizeFanDuel([fdPage(fdBase())], FD_FIGHTS);
+  const markets = props.filter((p) => !p.parentKey);
+  assert.deepEqual(markets.map((p) => p.statLabel).sort(), ['Moneyline', 'Total Rounds', 'Will the fight go the distance?']);
+  assert.equal(props.length, 3 + 6);
+  assert.ok(props.every((p) => p.kind === 'tracked' && p.book === 'fanduel'));
+  assert.equal(markets[0].event, 'Ciryl Gane v Josh Hokit');
+});
+
+test('fanduel market line comes from the handicap, and only when there is one', () => {
+  const props = normalizeFanDuel([fdPage(fdBase())], FD_FIGHTS);
+  const tr = props.find((p) => p.statLabel === 'Total Rounds');
+  assert.equal(tr.value, 2.5);
+  assert.equal(props.find((p) => p.statLabel === 'Moneyline').value, null);
+  const ladder = normalizeFanDuel([fdPage([
+    fdMarket('Alt Total Rounds', [fdRunner('Over 1.5', -400), fdRunner('Over 2.5', -150), fdRunner('Over 3.5', 200)]),
+  ])], FD_FIGHTS);
+  assert.equal(ladder.find((p) => !p.parentKey).value, null, 'a ladder has no single line to move');
+});
+
+test('fanduel odds render as signed american odds', () => {
+  const props = normalizeFanDuel([fdPage(fdBase())], FD_FIGHTS);
+  const ml = props.find((p) => p.statLabel === 'Moneyline');
+  assert.equal(ml.note, 'Ciryl Gane -245 · Josh Hokit +186');
+  const hokit = props.find((p) => p.fighter === 'Josh Hokit');
+  assert.equal(hokit.note, '+186');
+  assert.equal(hokit.value, 186, 'moneyline prices are tracked as numbers');
+  assert.equal(hokit.unit, 'odds');
+});
+
+/** Baseline a FanDuel board, then poll a second one, through the real alert path. */
+function fdAlerts(before, after) {
+  const st = { books: {} };
+  const d0 = store.diff(st, 'fanduel', normalizeFanDuel([fdPage(before)], FD_FIGHTS));
+  store.commit(st, 'fanduel', d0.fresh);
+  const d1 = store.diff(st, 'fanduel', normalizeFanDuel([fdPage(after)], FD_FIGHTS));
+  const cfg = { alertOnFantasy: true, alertOnUnknownStat: true, alertOnLineMove: true, lineMoveMinDelta: 0 };
+  return buildAlerts({ meta: fdMeta }, d1, cfg, false);
+}
+
+test('a new fanduel market (gone in 60 seconds) alerts once, without its selections', () => {
+  const sixty = fdMarket('Fight to end in under 60 seconds', [fdRunner('Yes', 2500), fdRunner('No', -10000)]);
+  const alerts = fdAlerts(fdBase(), [...fdBase(), sixty]);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].kind, 'tracked');
+  assert.deepEqual(alerts[0].props.map((p) => p.statLabel), ['Fight to end in under 60 seconds']);
+  assert.equal(alerts[0].props[0].starred, true, 'a market the user asked for is starred');
+  const payload = buildDiscordPayload(alerts[0], { discord: {} });
+  assert.match(payload.content, /^⭐ 🚨 FanDuel Sportsbook/);
+  assert.match(JSON.stringify(payload.embeds), /Yes \+2500/);
+});
+
+test('fanduel stat props that drop later are each caught', () => {
+  const later = [
+    fdMarket('Ciryl Gane Total Significant Strikes', [fdRunner('Over', -115, { handicap: 45.5 }), fdRunner('Under', -115, { handicap: 45.5 })]),
+    fdMarket('Josh Hokit Total Takedowns', [fdRunner('Over', 110, { handicap: 1.5 }), fdRunner('Under', -140, { handicap: 1.5 })]),
+    fdMarket('Fighter to Score a Knockdown', [fdRunner('Ciryl Gane', 150), fdRunner('Josh Hokit', 400)]),
+  ];
+  const alerts = fdAlerts(fdBase(), [...fdBase(), ...later]);
+  const labels = alerts.flatMap((a) => a.props.map((p) => p.statLabel)).sort();
+  assert.deepEqual(labels, later.map((m) => m.marketName).sort());
+  assert.ok(alerts[0].props.every((p) => p.starred));
+});
+
+test('a selection added to an existing fanduel market alerts on its own', () => {
+  const before = [fdMarket('Time of Finish', [fdRunner('Round 1 0:00-1:00', 1800), fdRunner('Decision', 200)])];
+  const after = [fdMarket('Time of Finish', [
+    fdRunner('Round 1 0:00-1:00', 1800),
+    fdRunner('Decision', 200),
+    fdRunner('Under 60 seconds', 2500),
+  ])];
+  // Fix the market id so only the runner list differs.
+  after[0].marketId = before[0].marketId;
+  const alerts = fdAlerts(before, after);
+  assert.equal(alerts.length, 1);
+  assert.deepEqual(alerts[0].props.map((p) => p.statLabel), ['Time of Finish — Under 60 seconds']);
+  assert.equal(alerts[0].props[0].starred, true);
+  // "Under 60" is a selection, not an O/U line at 60.
+  const tof = normalizeFanDuel([fdPage(after)], FD_FIGHTS).find((p) => p.statLabel === 'Time of Finish');
+  assert.equal(tof.value, null);
+});
+
+test('small odds ticks are silent; a line move on the market is a move', () => {
+  const after = fdBase();
+  after[0].runners[0].winRunnerOdds.americanDisplayOdds.americanOddsInt = -255; // a tick
+  after[2].runners[0].winRunnerOdds.americanDisplayOdds.americanOddsInt = 400; // not a moneyline
+  after[1].runners.forEach((r) => (r.handicap = 1.5)); // Total Rounds 2.5 -> 1.5
+  const alerts = fdAlerts(fdBase(), after);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].kind, 'move');
+  assert.equal(alerts[0].props[0].statLabel, 'Total Rounds');
+  assert.equal(alerts[0].props[0].previousValue, 2.5);
+  assert.match(JSON.stringify(buildDiscordPayload(alerts[0], { discord: {} }).embeds), /2\.5.*1\.5/);
+});
+
+test('an O/U line move does not read as a brand new fanduel selection', () => {
+  const before = [fdMarket('Total Rounds', [fdRunner('Over 2.5', -150), fdRunner('Under 2.5', 120)])];
+  const after = [fdMarket('Total Rounds', [fdRunner('Over 1.5', -300), fdRunner('Under 1.5', 220)])];
+  const alerts = fdAlerts(before, after);
+  assert.ok(alerts.every((a) => a.kind === 'move'), alerts.map((a) => a.kind).join());
+});
+
+test('fanduel ignores other sports and settled markets in the capture', () => {
+  const page = fdPage(fdBase());
+  page.attachments.events[999999] = { eventId: 999999, name: 'Chiefs v Bills', eventTypeId: 6423 };
+  page.attachments.markets.x = fdMarket('Moneyline', [fdRunner('Chiefs', -120)], { eventId: 999999 });
+  page.attachments.markets.y = fdMarket('Round 1 Winner', [fdRunner('Gane', -200)], { marketStatus: 'CLOSED' });
+  const props = normalizeFanDuel([page], []);
+  assert.ok(props.every((p) => p.event === 'Ciryl Gane v Josh Hokit'));
+  assert.ok(!props.some((p) => p.statLabel === 'Round 1 Winner'));
+});
+
+test('fanduel merges a market listed under several tabs', () => {
+  const ml = fdBase()[0];
+  const props = normalizeFanDuel([fdPage([ml]), fdPage([{ ...ml }])], FD_FIGHTS);
+  assert.equal(props.filter((p) => p.statLabel === 'Moneyline' && !p.parentKey).length, 1);
+  assert.equal(props.filter((p) => p.fighter === 'Ciryl Gane').length, 1);
+});
+
+test('fanduel board file accepts raw, array and wrapped captures', () => {
+  const page = fdPage(fdBase());
+  assert.equal(fdNormalizeBoardFile(page).responses.length, 1);
+  assert.equal(fdNormalizeBoardFile([page, page]).responses.length, 2);
+  const wrapped = fdNormalizeBoardFile({ responses: [{ url: 'x', json: page }], fights: [FD_URL] });
+  assert.equal(wrapped.responses[0], page);
+  assert.deepEqual(wrapped.fights, [{ url: FD_URL, eventId: '36094809' }]);
+});
+
+/** Moneyline at `gane` / `hokit` after a baseline of -245 / +186. */
+const fdMl = (gane, hokit) => [
+  fdMarket('Moneyline', [fdRunner('Ciryl Gane', gane), fdRunner('Josh Hokit', hokit)]),
+];
+
+test('a favorite flipping to underdog alerts as a moneyline swing', () => {
+  const alerts = fdAlerts(fdMl(-245, 186), fdMl(130, -155));
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].kind, 'odds');
+  const byName = Object.fromEntries(alerts[0].props.map((p) => [p.fighter, p.swing]));
+  assert.equal(byName['Ciryl Gane'], 'flipped to UNDERDOG');
+  assert.equal(byName['Josh Hokit'], 'flipped to FAVORITE');
+  const payload = buildDiscordPayload(alerts[0], { discord: {} });
+  assert.match(payload.content, /^💰 FanDuel Sportsbook — big moneyline moves/);
+  assert.match(JSON.stringify(payload.embeds), /-245.*\+130.*flipped to UNDERDOG/);
+});
+
+test('a slight favorite becoming a huge favorite alerts', () => {
+  const alerts = fdAlerts(fdMl(-130, 110), fdMl(-550, 400));
+  const gane = alerts.find((a) => a.kind === 'odds').props.find((p) => p.fighter === 'Ciryl Gane');
+  assert.equal(gane.swing, 'slight favorite → huge favorite');
+});
+
+test('a slow drift is caught once it adds up, then re-anchors', () => {
+  const st = { books: {} };
+  const cfg = { alertOnFantasy: true };
+  const poll = (g, h) => {
+    const d = store.diff(st, 'fanduel', normalizeFanDuel([fdPage(fdMl(g, h))], FD_FIGHTS));
+    const a = buildAlerts({ meta: fdMeta }, d, cfg, !st.books.fanduel);
+    store.commit(st, 'fanduel', d.fresh);
+    return a.filter((x) => x.kind === 'odds');
+  };
+  poll(-160, 135); // baseline
+  assert.equal(poll(-170, 145).length, 0);
+  assert.equal(poll(-185, 155).length, 0);
+  // No single tick is big, but +135 -> +165 adds up to slight underdog -> underdog.
+  const a = poll(-200, 165);
+  assert.equal(a.length, 1);
+  assert.deepEqual(a[0].props.map((p) => p.swing), ['slight underdog → underdog']);
+  assert.equal(poll(-205, 168).length, 0, 'the reported price is the new anchor');
+});
+
+test('a price wobbling across a boundary does not ping every tick', () => {
+  assert.equal(oddsMoveIsMajor(-148, -152), null);
+  assert.equal(oddsMoveIsMajor(-105, 102), null);
+  assert.equal(oddsMoveIsMajor(-249, -251), null);
+  assert.equal(oddsTier(-600), 'huge favorite');
+  assert.equal(oddsTier(300), 'big underdog');
+});
+
+test('moneyline swings can be switched off, and the threshold raised', () => {
+  const st = { books: {} };
+  const d0 = store.diff(st, 'fanduel', normalizeFanDuel([fdPage(fdMl(-200, 165))], FD_FIGHTS));
+  store.commit(st, 'fanduel', d0.fresh);
+  const d1 = store.diff(st, 'fanduel', normalizeFanDuel([fdPage(fdMl(-120, 100))], FD_FIGHTS));
+  const off = buildAlerts({ meta: fdMeta }, d1, { fanduel: { alertOnOddsMove: false } }, false);
+  assert.equal(off.length, 0);
+  assert.equal(oddsMoveIsMajor(-200, -260, { oddsMoveMinPct: 25 }), 'favorite → big favorite');
+  assert.equal(oddsMoveIsMajor(-300, -380, { oddsMoveMinPct: 25 }), null);
+});
+
+test('fanduel line moves alert even with the global line-move switch off', () => {
+  const st = { books: {} };
+  const d0 = store.diff(st, 'fanduel', normalizeFanDuel([fdPage(fdBase())], FD_FIGHTS));
+  store.commit(st, 'fanduel', d0.fresh);
+  const after = fdBase();
+  after[1].runners.forEach((r) => (r.handicap = 1.5));
+  const d1 = store.diff(st, 'fanduel', normalizeFanDuel([fdPage(after)], FD_FIGHTS));
+  const cfg = { alertOnLineMove: false, fanduel: { alertOnLineMove: true } };
+  assert.equal(buildAlerts({ meta: fdMeta }, d1, cfg, false).filter((a) => a.kind === 'move').length, 1);
+  assert.equal(buildAlerts({ meta: fdMeta }, d1, { alertOnLineMove: false }, false).length, 0);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);
