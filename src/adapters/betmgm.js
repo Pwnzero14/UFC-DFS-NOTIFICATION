@@ -166,12 +166,22 @@ export const fightScript = (watch) => `(async () => {
     const t = own(e) || (e.children.length === 0 ? (e.textContent || '').trim() : '');
     if (!t || t.length < 4 || t.length > 120) continue;
     const cls = typeof e.className === 'string' ? e.className : '';
-    if (!(watch.some(re => re.test(t)) || LOOKS_LIKE_MARKET.test(t) || TITLE_CLASS.test(cls))) continue;
+    const accordionTitle = e.matches('[slot="title"]') && !!e.closest('[aria-controls]');
+    if (!(watch.some(re => re.test(t)) || LOOKS_LIKE_MARKET.test(t) || TITLE_CLASS.test(cls) || accordionTitle)) continue;
     if (seen.has(t.toLowerCase())) continue;
-    // Climb to the block holding this market's prices, without swallowing the
-    // whole page.
-    let box = e, note = '';
-    for (let i = 0; i < 7 && box; i++, box = box.parentElement) {
+    // BetMGM markets are accordions: the title sits in a header button whose
+    // aria-controls names the panel holding the selections. Read that panel
+    // when there is one; otherwise climb to the block holding the prices,
+    // without swallowing the whole page.
+    let note = '';
+    const ctl = e.closest('[aria-controls]');
+    const panel = ctl && document.getElementById(ctl.getAttribute('aria-controls'));
+    // The left rail is an accordion too ("UFC 334" over a list of fights);
+    // a panel full of fight links is the card, not a market.
+    if (panel && panel.querySelector('a[href*="/sports/events/"]')) continue;
+    if (panel) note = (panel.innerText || '').trim().slice(0, 700);
+    let box = note ? null : e;
+    for (let i = 0; i < 10 && box; i++, box = box.parentElement) {
       const txt = (box.innerText || '').trim();
       if (txt.length > 700) break;
       if (txt.length > t.length + 3 && /\\d/.test(txt.replace(t, ''))) { note = txt; break; }
