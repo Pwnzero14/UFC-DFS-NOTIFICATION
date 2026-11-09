@@ -143,8 +143,8 @@ harmlessly to a no-op with Discord still working.
 | `lineMoveMinDelta` | `0` | Ignore moves smaller than this. `0` = report every move |
 | `discord.mentionOnLineMove` | `true` | Whether line moves ping as well as post |
 | `alertOnFirstRun` | `false` | Alert on the initial baseline sweep |
-| `books.*` | `true` | Turn individual books off (`fanduel` defaults off) |
-| `fanduel.boardFile` | `""` | Path to the captured FanDuel market JSON |
+| `books.*` | `true` | Turn individual books off |
+| `fanduel.boardFile` | `""` | Read captured FanDuel JSON from this file instead of the browser |
 | `fanduel.highlight` | see example | Market names (regex) that get a ⭐ |
 | `quietHours` | off | Suppress desktop toasts in a time window (Discord still posts) |
 | `heartbeat.enabled` | `true` | Post a periodic "still alive" status to Discord |
@@ -223,7 +223,7 @@ Set `alertOnUnknownStat: false` once fantasy has dropped and you've seen it work
 | PrizePicks | `partner-api.prizepicks.com/projections?league_id=12` | none | 12 = UFC. Fantasy stat is `Fantasy Score` |
 | Betr | `api.fantasy.betr.app/graphql` | none | Two-stage: list UFC events, then projections per event |
 | Pick6 | `pick6.draftkings.com/?sport=UFC` | none | No JSON API; the SSR HTML is parsed |
-| FanDuel Sportsbook | `fanduel.boardFile` | none | Market JSON your own browser fetched, written to a file |
+| FanDuel Sportsbook | `sportsbook.fanduel.com/navigation/ufc` | none | Headless Chrome walks every fight and tab, reads the page's market JSON |
 
 ### FanDuel Sportsbook: every market, as it drops
 
@@ -259,13 +259,17 @@ Markets matching `fanduel.highlight` get a ⭐ in the title and on the line. The
 list covers knockdowns, takedowns, significant strikes and the 60-second market; add
 your own as regex strings.
 
-**Source.** FanDuel is read from `fanduel.boardFile`, the same bridge Underdog and
-Betr use: the FanDuel page open in your own browser fetches its market JSON
-(`event-page` / `content-managed-page` responses), whatever captures those writes them
-to the file, and the watcher reads it. The file can hold one raw response, an array of
-them, or `{ "responses": [...], "fights": ["<fight url>", ...] }`. A file older than
-30 minutes is reported as stale rather than silently trusted. FanDuel is **off by
-default** until `books.fanduel` is `true` and `boardFile` is set.
+**Source.** A plain headless Chrome on this PC, the way Pick6 is read: it opens the
+UFC page, then every fight and every tab on it (Method of Victory, Round Props, Time
+Props, and any tab FanDuel adds later), and reads the market JSON those pages load. A
+full card takes a few minutes, so FanDuel is polled every 5 minutes. It needs Chrome or
+Edge installed and runs with just the watcher on.
+
+Unlike the DraftKings adapter it does **not** disguise itself. If FanDuel refuses an
+automated browser, the log says so, the heartbeat marks FanDuel 🔴, and the other books
+carry on. The fallback is `fanduel.boardFile`: point it at captured FanDuel JSON (one
+raw response, an array of them, or `{ "responses": [...], "fights": [url, ...] }`) and
+the browser is skipped. A file older than 30 minutes is reported as stale.
 
 ### Things worth knowing
 
