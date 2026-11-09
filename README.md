@@ -224,6 +224,7 @@ Set `alertOnUnknownStat: false` once fantasy has dropped and you've seen it work
 | Betr | `api.fantasy.betr.app/graphql` | none | Two-stage: list UFC events, then projections per event |
 | Pick6 | `pick6.draftkings.com/?sport=UFC` | none | No JSON API; the SSR HTML is parsed |
 | FanDuel Sportsbook | `sportsbook.fanduel.com/navigation/ufc` | none | Headless Chrome walks every fight and tab, reads the page's market JSON |
+| BetMGM (Kentucky) | `ky.betmgm.com/en/sports/mma-45` | none | Headless Chrome opens every UFC fight page, reads the page's market JSON |
 
 ### FanDuel Sportsbook: every market, as it drops
 
@@ -276,6 +277,34 @@ carry on. The fallback is `fanduel.boardFile`: point it at captured FanDuel JSON
 raw response, an array of them, or `{ "responses": [...], "fights": [url, ...] }`) and
 the browser is skipped. A file older than 30 minutes is reported as stale.
 
+### BetMGM: ping when the point deduction prop drops
+
+BetMGM's Kentucky site posts moneylines first and specials later. This watches
+every UFC fight there and pings the moment a market whose name matches
+`betmgm.watch` appears - by default anything with "point deduction" in it. The
+alert is starred (⭐ 🚨) and lists the fight and the prices.
+
+Every other BetMGM market is recorded quietly, so the console shows a prop count
+and the heartbeat shows BetMGM is being read, but a moneyline never pings.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `books.betmgm` | `true` | Turn BetMGM on or off |
+| `betmgm.watch` | `["point\\s*deduct"]` | Market names (regex) that ping when they post |
+| `betmgm.competitions` | `["ufc"]` | Which events on the MMA page count; `[]` keeps all MMA |
+| `discord.webhooks.betmgm` | `""` | Its own Discord channel; falls back to `webhookUrl` |
+
+Check what BetMGM shows right now without touching the watcher:
+
+```
+node src/index.js --status --book=betmgm
+```
+
+**Source.** A plain headless Chrome, like FanDuel and Pick6: it opens the MMA page,
+then each UFC fight's page, and reads the market JSON BetMGM's own pages load. It
+does **not** disguise itself; if BetMGM refuses an automated browser the log says
+"blocked" and the heartbeat marks BetMGM 🔴. Polled every 5 minutes.
+
 ### Things worth knowing
 
 **PrizePicks is rate limited.** `api.prizepicks.com` sits behind DataDome and returns a
@@ -311,7 +340,7 @@ src/
   fantasy.js            fantasy matching + known-stat lists
   notify.js             console / Discord / Windows toast
   adapters/
-    underdog.js  prizepicks.js  betr.js  pick6.js  dksportsbook.js  fanduel.js
+    underdog.js  prizepicks.js  betr.js  pick6.js  dksportsbook.js  fanduel.js  betmgm.js
   lock.js               single-instance PID lock
 test/detection.test.js  30 tests, no network
 start-hidden.vbs        launches the watcher with no console window

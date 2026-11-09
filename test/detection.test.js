@@ -24,6 +24,12 @@ import {
   eventIdFromUrl,
   meta as fdMeta,
 } from '../src/adapters/fanduel.js';
+import {
+  normalizeBetMGM,
+  fixtureId as bmFixtureId,
+  fixtureIdFromUrl as bmFixtureIdFromUrl,
+  meta as bmMeta,
+} from '../src/adapters/betmgm.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -1623,6 +1629,98 @@ test('fanduel line moves alert even with the global line-move switch off', () =>
   const cfg = { alertOnLineMove: false, fanduel: { alertOnLineMove: true } };
   assert.equal(buildAlerts({ meta: fdMeta }, d1, cfg, false).filter((a) => a.kind === 'move').length, 1);
   assert.equal(buildAlerts({ meta: fdMeta }, d1, { alertOnLineMove: false }, false).length, 0);
+});
+
+// ------------------------------------------------------------------ BetMGM
+
+const BM_URL = 'https://ky.betmgm.com/en/sports/events/cyril-gane-fra-josh-hokit-usa-19955231';
+const BM_FIGHTS = [{ url: BM_URL, fixtureId: '19955231' }];
+const bmGame = (name, results) => ({
+  id: Math.floor(Math.random() * 1e9),
+  name: { value: name },
+  visibility: 'Visible',
+  results: results.map(([n, o]) => ({ id: Math.floor(Math.random() * 1e9), name: { value: n }, americanOdds: o, visibility: 'Visible' })),
+});
+const bmFixture = (games, extra = {}) => ({
+  fixture: {
+    id: '2:19955231',
+    name: { value: 'Cyril Gane (FRA) - Josh Hokit (USA)' },
+    sport: { id: 45, name: { value: 'MMA' } },
+    competition: { id: 1, name: { value: 'UFC 334' } },
+    startDate: '2026-11-14T23:00:00Z',
+    participants: [{ name: { value: 'Cyril Gane' } }, { name: { value: 'Josh Hokit' } }],
+    games,
+    ...extra,
+  },
+});
+const bmMoneyline = () => bmGame('Fight result: 2-way', [['Cyril Gane', -225], ['Josh Hokit', 185]]);
+const bmDeduction = () => bmGame('Will there be a point deduction?', [['Yes', 600], ['No', -1200]]);
+
+test('betmgm fixture ids are read off the feed and the fight URL', () => {
+  assert.equal(bmFixtureId('2:19955231'), '19955231');
+  assert.equal(bmFixtureId(19955231), '19955231');
+  assert.equal(bmFixtureIdFromUrl(BM_URL), '19955231');
+  assert.equal(bmFixtureIdFromUrl('https://ky.betmgm.com/en/sports/mma-45'), null);
+});
+
+test('betmgm records the moneyline quietly and names the fight', () => {
+  const props = normalizeBetMGM([bmFixture([bmMoneyline()])], BM_FIGHTS);
+  assert.equal(props.length, 1);
+  assert.equal(props[0].kind, 'board');
+  assert.equal(props[0].event, 'Cyril Gane vs Josh Hokit');
+  assert.equal(props[0].url, BM_URL);
+  assert.match(props[0].note, /Cyril Gane -225 · Josh Hokit \+185/);
+});
+
+test('a betmgm point deduction prop pings once when it drops, starred', () => {
+  const st = { books: {} };
+  const d0 = store.diff(st, 'betmgm', normalizeBetMGM([bmFixture([bmMoneyline()])], BM_FIGHTS));
+  store.commit(st, 'betmgm', d0.fresh);
+  const quiet = buildAlerts({ meta: bmMeta }, d0, { alertOnFantasy: true, alertOnUnknownStat: true }, false);
+  assert.equal(quiet.length, 0, 'a moneyline alone must not ping');
+
+  const d1 = store.diff(st, 'betmgm', normalizeBetMGM([bmFixture([bmMoneyline(), bmDeduction()])], BM_FIGHTS));
+  const alerts = buildAlerts({ meta: bmMeta }, d1, { alertOnFantasy: true, alertOnUnknownStat: true }, false);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].kind, 'tracked');
+  assert.equal(alerts[0].props[0].statLabel, 'Will there be a point deduction?');
+  assert.ok(alerts[0].props[0].starred);
+  const payload = buildDiscordPayload(alerts[0], {});
+  assert.match(payload.content, /⭐ 🚨 BetMGM/);
+  assert.match(payload.embeds[0].description, /Yes \+600/);
+  store.commit(st, 'betmgm', d1.fresh);
+
+  // Odds moving on the deduction market afterwards stays quiet.
+  const later = bmDeduction();
+  later.results[0].americanOdds = 450;
+  const d2 = store.diff(st, 'betmgm', normalizeBetMGM([bmFixture([bmMoneyline(), later])], BM_FIGHTS));
+  assert.equal(buildAlerts({ meta: bmMeta }, d2, { alertOnFantasy: true, alertOnLineMove: true }, false).length, 0);
+});
+
+test('betmgm keeps only UFC fights and MMA fixtures', () => {
+  const pfl = bmFixture([bmDeduction()], { id: '2:111111', competition: { name: { value: 'PFL World Tournament' } } });
+  const soccer = bmFixture([bmDeduction()], { id: '2:222222', sport: { id: 4 } });
+  assert.equal(normalizeBetMGM([pfl, soccer], []).length, 0);
+  assert.equal(normalizeBetMGM([pfl], [], { competitions: [] }).length, 1);
+});
+
+test('betmgm merges a fixture seen on the board and on its own page', () => {
+  const board = { fixtures: [bmFixture([bmMoneyline()]).fixture] };
+  const page = bmFixture([bmMoneyline(), bmDeduction()]);
+  const props = normalizeBetMGM([board, page], BM_FIGHTS);
+  assert.equal(props.length, 2);
+  assert.equal(props.filter((p) => p.kind === 'tracked').length, 1);
+});
+
+test('betmgm reads optionMarkets too, and the watch list is configurable', () => {
+  const fx = bmFixture([], {
+    optionMarkets: [{ id: 9, name: { value: 'Point Deduction' }, status: 'Visible', options: [{ name: { value: 'Yes' }, price: { americanOdds: 700 } }] }],
+  });
+  const props = normalizeBetMGM([fx], BM_FIGHTS);
+  assert.equal(props[0].kind, 'tracked');
+  assert.match(props[0].note, /Yes \+700/);
+  const custom = normalizeBetMGM([bmFixture([bmMoneyline()])], BM_FIGHTS, { watch: ['fight result'] });
+  assert.equal(custom[0].kind, 'tracked');
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);
