@@ -224,7 +224,7 @@ Set `alertOnUnknownStat: false` once fantasy has dropped and you've seen it work
 | Betr | `api.fantasy.betr.app/graphql` | none | Two-stage: list UFC events, then projections per event |
 | Pick6 | `pick6.draftkings.com/?sport=UFC` | none | No JSON API; the SSR HTML is parsed |
 | FanDuel Sportsbook | `sportsbook.fanduel.com/navigation/ufc` | none | Headless Chrome walks every fight and tab, reads the page's market JSON |
-| BetMGM (Kentucky) | `ky.betmgm.com/en/sports/mma-45` | none | Headless Chrome opens every UFC fight page, reads the page's market JSON |
+| BetMGM (Kentucky) | `ky.betmgm.com/en/sports/mma-45` | none | Headless Chrome opens every UFC fight page and reads its markets off the page |
 
 ### FanDuel Sportsbook: every market, as it drops
 
@@ -301,7 +301,8 @@ node src/index.js --status --book=betmgm
 ```
 
 **Source.** A plain headless Chrome, like FanDuel and Pick6: it opens the MMA page,
-then each UFC fight's page, and reads the market JSON BetMGM's own pages load. It
+then each UFC fight's page, and reads the market names and prices off the page.
+BetMGM pushes odds over a websocket, so there is no JSON feed to read. It
 does **not** disguise itself; if BetMGM refuses an automated browser the log says
 "blocked" and the heartbeat marks BetMGM 🔴. Polled every 5 minutes.
 

@@ -8,9 +8,10 @@
 // show the book is being read even while nothing watched has posted.
 //
 // Source: a plain headless Chrome, the same one FanDuel and Pick6 use. It opens
-// the MMA page, then each fight's page, and keeps the market JSON those pages
-// fetch for their own display (BetMGM's cds-api "bettingoffer" feed). It does
-// NOT disguise itself: if BetMGM refuses an automated browser, the poll fails
+// the MMA page, then each fight's page, and reads the markets off the rendered
+// page. BetMGM pushes its odds over a websocket rather than plain JSON requests
+// (checked live on 2026-11-09: no feed request is ever made), so the page text
+// is the reliable source. It does NOT disguise itself: if BetMGM refuses an automated browser, the poll fails
 // with a plain "blocked" error and the heartbeat goes red. Nothing here tries
 // to get round a bot check.
 
@@ -23,8 +24,9 @@ export const BOARD_URL = 'https://ky.betmgm.com/en/sports/mma-45';
 // betmgm.watch in config.json.
 export const DEFAULT_WATCH = ['point\\s*deduct'];
 
-// Only fights in a competition matching one of these. BetMGM's MMA page also
-// lists PFL and others. A fight with no competition name at all is kept.
+// Only fights whose competition (the "USA | UFC 334" crumb on a fight page)
+// matches one of these. BetMGM's MMA page can list PFL and others too. A fight
+// whose crumb could not be read is kept. Overridable with betmgm.competitions.
 export const DEFAULT_COMPETITIONS = ['ufc'];
 
 export const meta = {
@@ -46,133 +48,60 @@ const slug = (s) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
-// BetMGM wraps display text as { value: "..." } almost everywhere.
-const text = (v) => (v && typeof v === 'object' ? v.value ?? v.text ?? '' : v ?? '');
-
-/** "2:19955231" or 19955231 -> "19955231" */
-export function fixtureId(id) {
-  const m = String(id ?? '').match(/(\d{5,})\s*$/);
-  return m ? m[1] : null;
-}
-
 /** The fixture id BetMGM puts at the end of every fight URL. */
 export function fixtureIdFromUrl(url) {
   const m = String(url || '').split(/[?#]/)[0].match(/\/events\/[^/]*?-(\d{5,})\/?$/);
   return m ? m[1] : null;
 }
 
-/** Every object in a JSON tree that looks like a fixture carrying markets. */
-function fixturesIn(node, out = [], depth = 0) {
-  if (!node || typeof node !== 'object' || depth > 14) return out;
-  if (Array.isArray(node)) {
-    for (const v of node) fixturesIn(v, out, depth + 1);
-    return out;
-  }
-  if (
-    node.id != null &&
-    node.name &&
-    (Array.isArray(node.games) || Array.isArray(node.optionMarkets))
-  ) {
-    out.push(node);
-  }
-  for (const v of Object.values(node)) fixturesIn(v, out, depth + 1);
-  return out;
+/**
+ * The fight's name. Page title first ("Cyril Gane - Josh Hokit Odds | BetMGM"),
+ * else the URL slug ("cyril-gane-fra-josh-hokit-usa-19955231").
+ */
+export function fightName(title, url) {
+  const t = String(title || '')
+    .split('|')[0]
+    .replace(/\b(odds|betting|lines|props)\b.*$/i, '')
+    .replace(/\s*\([A-Z]{2,3}\)/g, '')
+    .trim();
+  if (/\s[-–]\s|\svs\.?\s/i.test(t)) return t.replace(/\s+[-–]\s+|\s+vs\.?\s+/i, ' vs ');
+  const last = String(url || '').split(/[?#]/)[0].split('/').filter(Boolean).pop() || '';
+  const name = last.replace(/-\d{5,}$/, '').replace(/-/g, ' ').trim();
+  return name ? name.replace(/\b\w/g, (c) => c.toUpperCase()) : null;
 }
-
-function american(raw) {
-  if (raw == null || raw === '') return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n === 0) return null;
-  return n > 0 ? `+${n}` : String(n);
-}
-
-/** A market's selections as { name, odds }, from either feed shape. */
-function selections(market) {
-  const list = Array.isArray(market.results)
-    ? market.results
-    : Array.isArray(market.options)
-      ? market.options
-      : [];
-  return list
-    .filter((s) => s && text(s.name))
-    .filter((s) => !/^(hidden|closed|settled)$/i.test(s.visibility || s.status || ''))
-    .map((s) => ({
-      name: String(text(s.name)).trim(),
-      odds: american(s.americanOdds ?? s.price?.americanOdds),
-    }));
-}
-
-function summarize(sels) {
-  if (!sels.length) return 'posted';
-  const shown = sels.slice(0, 3).map((s) => `${s.name}${s.odds ? ` ${s.odds}` : ''}`).join(' · ');
-  return sels.length > 3 ? `${shown} · +${sels.length - 3} more` : shown;
-}
-
-/** "Cyril Gane (FRA) - Josh Hokit (USA)" -> "Cyril Gane vs Josh Hokit" */
-function eventName(fx) {
-  const parts = Array.isArray(fx.participants)
-    ? fx.participants.map((p) => String(text(p.name)).trim()).filter(Boolean)
-    : [];
-  if (parts.length === 2) return `${parts[0]} vs ${parts[1]}`;
-  const raw = String(text(fx.name)).trim();
-  return raw.replace(/\s*\([A-Z]{2,3}\)/g, '').replace(/\s+-\s+/, ' vs ') || null;
-}
-
-const competitionOf = (fx) =>
-  String(text(fx.competition?.name) || text(fx.tournament?.name) || '').trim();
 
 /**
- * Turn captured BetMGM JSON into props: one per market per fight.
+ * Turn what the fight pages showed into props: one per market per fight.
  *
- * `fights` ({ url, fixtureId }) are the fight pages found on the MMA board; a
- * fixture listed there is kept even when its competition name is missing.
+ * `pages` is [{ url, title, competition, markets: [{ name, note }] }], one
+ * entry per fight.
+ * Markets whose name matches `watch` alert; the rest are recorded quietly.
  */
 export function normalizeBetMGM(
-  responses,
-  fights = [],
+  pages,
   { watch = DEFAULT_WATCH, competitions = DEFAULT_COMPETITIONS } = {}
 ) {
   const watchRes = watch.map((w) => new RegExp(w, 'i'));
   const watched = (name) => watchRes.some((re) => re.test(name));
   const compRes = competitions.map((c) => new RegExp(c, 'i'));
-  const urlById = new Map(fights.filter((f) => f.fixtureId).map((f) => [f.fixtureId, f.url]));
-
-  // fixtureId -> { fixture, markets: Map(name -> selections) }. The same
-  // fixture arrives several times (board, then its own page with every market);
-  // markets merge so the fullest view wins.
-  const byFixture = new Map();
-  for (const json of responses) {
-    for (const fx of fixturesIn(json)) {
-      const id = fixtureId(fx.id);
-      if (!id) continue;
-      // MMA is sport 45 on BetMGM. Anything else in a capture is ignored.
-      if (fx.sport?.id != null && String(fx.sport.id) !== '45') continue;
-      const comp = competitionOf(fx);
-      if (comp && compRes.length && !compRes.some((re) => re.test(comp))) continue;
-
-      const entry = byFixture.get(id) || { fixture: fx, markets: new Map() };
-      if (!entry.fixture.startDate && fx.startDate) entry.fixture = fx;
-      for (const m of [...(fx.games || []), ...(fx.optionMarkets || [])]) {
-        const name = String(text(m?.name)).trim();
-        if (!name) continue;
-        if (/^(closed|settled)$/i.test(m.status || m.visibility || '')) continue;
-        const sels = selections(m);
-        const prior = entry.markets.get(name);
-        if (!prior || sels.length > prior.length) entry.markets.set(name, sels);
-      }
-      byFixture.set(id, entry);
-    }
-  }
 
   const props = [];
-  for (const [id, { fixture, markets }] of byFixture) {
-    const event = eventName(fixture) || `Fight ${id}`;
-    const url = urlById.get(id) || BOARD_URL;
-    for (const [name, sels] of markets) {
+  const seen = new Set();
+  for (const page of pages || []) {
+    const id = fixtureIdFromUrl(page?.url);
+    if (!id) continue;
+    if (page.competition && compRes.length && !compRes.some((re) => re.test(page.competition))) continue;
+    const event = fightName(page.title, page.url) || `Fight ${id}`;
+    for (const mk of page.markets || []) {
+      const name = String(mk?.name || '').replace(/\s+/g, ' ').trim();
+      if (!name) continue;
+      const key = `${id}|${name}`.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
       const isWatched = watched(name);
       props.push({
         book: meta.key,
-        id: `${id}|${name}`.toLowerCase(),
+        id: key,
         event,
         fighter: null,
         statLabel: name,
@@ -182,9 +111,9 @@ export function normalizeBetMGM(
         kind: isWatched ? 'tracked' : 'board',
         value: null,
         status: 'open',
-        startsAt: fixture.startDate || null,
-        url,
-        note: summarize(sels),
+        startsAt: null,
+        url: page.url,
+        note: String(mk.note || '').trim() || 'posted',
         starred: isWatched,
       });
     }
@@ -194,8 +123,7 @@ export function normalizeBetMGM(
 
 // ------------------------------------------------------------- page scripts
 
-// The page's own market feed.
-const CAPTURE = /\/cds-api\/bettingoffer\//i;
+const EVENT_LINK = '/\\/sports\\/events\\/[^/]+-\\d{5,}$/i';
 
 // MMA board: every fight link. BetMGM fight URLs end in the fixture id:
 // /en/sports/events/cyril-gane-fra-josh-hokit-usa-19955231
@@ -203,7 +131,7 @@ export const LIST_SCRIPT = `(async () => {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const links = () => [...document.querySelectorAll('a[href]')]
     .map(a => a.href.split(/[?#]/)[0])
-    .filter(h => /\\/sports\\/events\\/[^/]+-\\d{5,}$/i.test(h));
+    .filter(h => ${EVENT_LINK}.test(h));
   for (let i = 0; i < 50 && !links().length; i++) await sleep(300);
   let last = -1, stable = 0;
   for (let i = 0; i < 40 && stable < 3; i++) {
@@ -217,39 +145,94 @@ export const LIST_SCRIPT = `(async () => {
   return { links: [...new Set(links())], text, title: document.title };
 })()`;
 
+// Fight page: every market heading in the fight panel, with the prices under
+// it. A heading is found two ways: its text matches a watched name or looks
+// like a market title ("Fight result: 2-way"), or its element carries one of
+// BetMGM's market-title classes. The left rail only lists fights, never market
+// names, so it cannot produce a false match.
+export const fightScript = (watch) => `(async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const watch = ${JSON.stringify(watch)}.map(w => new RegExp(w, 'i'));
+  for (let i = 0; i < 40 && !/fight result|2-way|point deduct/i.test(document.body?.innerText || ''); i++) await sleep(300);
+  await sleep(1500);
+
+  const own = e => [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').replace(/\\s+/g, ' ').trim();
+  const TITLE_CLASS = /option-group-name|market-name|option-group-header|group-name|panel-title|market-title/i;
+  const LOOKS_LIKE_MARKET = /^(fight result|method of victory|total rounds|round betting|will the fight|to win by|fight to go|point deduct|go the distance)/i;
+
+  const markets = [];
+  const seen = new Set();
+  for (const e of document.querySelectorAll('body *')) {
+    const t = own(e) || (e.children.length === 0 ? (e.textContent || '').trim() : '');
+    if (!t || t.length < 4 || t.length > 120) continue;
+    const cls = typeof e.className === 'string' ? e.className : '';
+    if (!(watch.some(re => re.test(t)) || LOOKS_LIKE_MARKET.test(t) || TITLE_CLASS.test(cls))) continue;
+    if (seen.has(t.toLowerCase())) continue;
+    // Climb to the block holding this market's prices, without swallowing the
+    // whole page.
+    let box = e, note = '';
+    for (let i = 0; i < 7 && box; i++, box = box.parentElement) {
+      const txt = (box.innerText || '').trim();
+      if (txt.length > 700) break;
+      if (txt.length > t.length + 3 && /\\d/.test(txt.replace(t, ''))) { note = txt; break; }
+    }
+    if (!note && !watch.some(re => re.test(t))) continue;
+    seen.add(t.toLowerCase());
+    note = note.replace(t, '').split('\\n').map(s => s.trim()).filter(Boolean).join(' · ').slice(0, 180);
+    markets.push({ name: t, note });
+  }
+
+  // "USA | UFC 334" above the fight names says which card this is.
+  let competition = null;
+  for (const e of document.querySelectorAll('body *')) {
+    const m = own(e).match(/^[A-Za-z .]{2,30}\\s\\|\\s(.{2,60})$/);
+    if (m) { competition = m[1].trim(); break; }
+  }
+
+  const links = [...document.querySelectorAll('a[href]')]
+    .map(a => a.href.split(/[?#]/)[0])
+    .filter(h => ${EVENT_LINK}.test(h));
+  return { url: location.href.split(/[?#]/)[0], title: document.title, competition, markets, links: [...new Set(links)],
+           text: (document.body?.innerText || '').slice(0, 300) };
+})()`;
+
 // What a refusal looks like. Matched so the error says "blocked" instead of
 // an unhelpful "no fights", never so it can be worked around.
-const BLOCKED = /access denied|you don't have permission to access|request blocked|press (&|and) hold|confirm you are a human|verify you are human|are you a robot|unusual (traffic|activity)|captcha|not available in your (location|area|region)/i;
+const BLOCKED = /access denied|you don't have permission to access|request blocked|press (&|and) hold|confirm you are a human|verify you are human|are you a robot|unusual (traffic|activity)|not available in your (location|area|region)/i;
 
-async function readLive(boardUrl) {
+const MAX_FIGHTS = 30;
+
+async function readLive(boardUrl, watch) {
   if (!findBrowser()) throw new Error('BetMGM needs a local Chrome/Edge install');
 
-  return browseSession(
-    async (page) => {
-      await page.goto(boardUrl);
-      const listed = (await page.evaluate(LIST_SCRIPT, 60000)) || {};
-      await page.settle();
+  return browseSession(async (page) => {
+    await page.goto(boardUrl);
+    const listed = (await page.evaluate(LIST_SCRIPT, 60000)) || {};
+    const pageText = `${listed.title || ''} ${listed.text || ''}`;
+    const queue = [...(listed.links || [])];
+    if (!queue.length && BLOCKED.test(pageText)) {
+      throw new Error('BetMGM blocked the automated browser - turn books.betmgm off');
+    }
 
-      const fights = (listed.links || []).map((url) => ({ url, fixtureId: fixtureIdFromUrl(url) }));
-      const pageText = `${listed.title || ''} ${listed.text || ''}`;
-      if (!fights.length && !page.responses.length && BLOCKED.test(pageText)) {
-        throw new Error('BetMGM blocked the automated browser - turn books.betmgm off');
-      }
-
-      // Each fight's own page fetches every market it has, not just the
-      // moneyline the board shows. That is where a point deduction prop lands.
-      for (const fight of fights) {
-        await page.goto(fight.url);
-        await page.settle();
-      }
-      return {
-        fights,
-        responses: page.responses.map((r) => r.json),
-        pageText: pageText.slice(0, 300),
-      };
-    },
-    { capture: CAPTURE }
-  );
+    // Each fight's own page lists every market it has, not just the moneyline
+    // the board shows. That is where a point deduction prop lands. The left
+    // rail there also lists the rest of the card, which fills in any fight the
+    // board did not show.
+    const done = new Set();
+    const pages = [];
+    while (queue.length && done.size < MAX_FIGHTS) {
+      const url = queue.shift();
+      const id = fixtureIdFromUrl(url);
+      if (!id || done.has(id)) continue;
+      done.add(id);
+      await page.goto(url);
+      const got = await page.evaluate(fightScript(watch), 45000).catch(() => null);
+      if (!got) continue;
+      pages.push({ ...got, url });
+      for (const l of got.links || []) if (!done.has(fixtureIdFromUrl(l))) queue.push(l);
+    }
+    return { pages, pageText: pageText.slice(0, 300) };
+  });
 }
 
 // ------------------------------------------------------------------- fetch
@@ -257,20 +240,18 @@ async function readLive(boardUrl) {
 export async function fetchProps() {
   const cfg = await loadConfig().catch(() => ({}));
   const bm = cfg.betmgm || {};
-  const { fights, responses, pageText } = await readLive(bm.boardUrl || BOARD_URL);
+  const watch = Array.isArray(bm.watch) && bm.watch.length ? bm.watch : DEFAULT_WATCH;
+  const { pages, pageText } = await readLive(bm.boardUrl || BOARD_URL, watch);
 
-  if (!fights.length && !responses.length) {
+  if (!pages.length) {
     throw new Error(
-      `BetMGM: MMA page showed no fights and no market data - page changed or blocked? (${pageText.replace(/\s+/g, ' ').slice(0, 80)})`
+      `BetMGM: MMA page showed no fights - page changed or blocked? (${pageText.replace(/\s+/g, ' ').slice(0, 80)})`
     );
   }
-  const watch = Array.isArray(bm.watch) && bm.watch.length ? bm.watch : DEFAULT_WATCH;
   const competitions = Array.isArray(bm.competitions) ? bm.competitions : DEFAULT_COMPETITIONS;
-  const props = normalizeBetMGM(responses, fights, { watch, competitions });
-  if (!props.length && fights.length) {
-    throw new Error(
-      `BetMGM: ${fights.length} fight(s) and ${responses.length} response(s) but no UFC markets read - feed shape changed?`
-    );
+  const props = normalizeBetMGM(pages, { watch, competitions });
+  if (!props.length) {
+    throw new Error(`BetMGM: opened ${pages.length} fight page(s) but read no markets - page layout changed?`);
   }
   return props;
 }
