@@ -8,7 +8,7 @@ export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULTS = {
   discord: {
     webhookUrl: '',
-    username: 'UFC Fantasy Alerts',
+    username: 'UFC Notifications',
     // Per-book channel routing: bookKey -> webhook URL. A book with no entry
     // falls back to webhookUrl. The heartbeat and blackout notices always use
     // webhookUrl (the main channel) since they cover every book at once.

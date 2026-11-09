@@ -143,7 +143,7 @@ export function buildDiscordPayload(alert, cfg) {
       });
     }
     return {
-      username: cfg.discord?.username || 'UFC Fantasy Alerts',
+      username: cfg.discord?.username || 'UFC Notifications',
       // No @everyone: each book posts to its own channel, and viewers opt into
       // channel notifications to be pinged that way. The bot never mentions.
       content: title,
@@ -192,7 +192,7 @@ export function buildDiscordPayload(alert, cfg) {
   }
 
   return {
-    username: cfg.discord?.username || 'UFC Fantasy Alerts',
+    username: cfg.discord?.username || 'UFC Notifications',
     // No @everyone: each book posts to its own channel, and viewers opt into
     // channel notifications to be pinged that way. The bot never mentions.
     content: title,
@@ -250,7 +250,7 @@ export function buildHeartbeatPayload(state, cfg, books, uptimeMs) {
       : `up ${Math.floor(uptimeMs / 3_600_000)}h ${Math.floor((uptimeMs % 3_600_000) / 60_000)}m`;
 
   return {
-    username: cfg.discord?.username || 'UFC Fantasy Alerts',
+    username: cfg.discord?.username || 'UFC Notifications',
     content: anyUnhealthy
       ? '⚠️ Watcher heartbeat — a book is unhealthy'
       : '💚 Watcher heartbeat — all books healthy',
@@ -292,7 +292,7 @@ export function humanDuration(ms) {
 export function buildBlackoutPayload(cfg, { from, to, ms }) {
   const stamp = (t) => `<t:${Math.floor(t / 1000)}:t>`;
   return {
-    username: cfg.discord?.username || 'UFC Fantasy Alerts',
+    username: cfg.discord?.username || 'UFC Notifications',
     content: `🌙 Watcher was dark for ${humanDuration(ms)}`,
     embeds: [
       {

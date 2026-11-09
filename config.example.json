@@ -1,7 +1,7 @@
 {
   "discord": {
     "webhookUrl": "",
-    "username": "UFC Fantasy Alerts",
+    "username": "UFC Notifications",
     "webhooks": {
       "underdog": "",
       "prizepicks": "",
