@@ -178,7 +178,10 @@ export const fightScript = (watch) => `(async () => {
     const panel = ctl && document.getElementById(ctl.getAttribute('aria-controls'));
     // The left rail is an accordion too ("UFC 334" over a list of fights);
     // a panel full of fight links is the card, not a market.
-    if (panel && panel.querySelector('a[href*="/sports/events/"]')) continue;
+    // Same for "All Events" and other navigation panels: markets hold price
+    // buttons, never links into the rest of the site.
+    if (panel && panel.querySelector('a[href*="/sports/"]')) continue;
+    if (/^(all events|featured|popular events|top events)$/i.test(t)) continue;
     if (panel) note = (panel.innerText || '').trim().slice(0, 700);
     let box = note ? null : e;
     for (let i = 0; i < 10 && box; i++, box = box.parentElement) {
