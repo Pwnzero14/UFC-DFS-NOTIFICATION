@@ -21,7 +21,9 @@ const DEFAULTS = {
   alertOnLineMove: true,
   lineMoveMinDelta: 0,
   alertOnFirstRun: false,
-  books: { underdog: true, prizepicks: true, betr: true, pick6: true },
+  // FanDuel answers headless Chrome with a press-and-hold bot check, so it is
+  // off unless switched on - otherwise it would just error every poll.
+  books: { underdog: true, prizepicks: true, betr: true, pick6: true, fanduel: false },
   // Betr closed its GraphQL endpoint to anonymous callers on 2026-09-07: the
   // gateway answers 401 before any query runs, so there is no query shape or
   // header that gets in. Paste a bearer token here and the adapter sends it.

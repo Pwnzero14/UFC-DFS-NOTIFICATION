@@ -7,6 +7,11 @@
 // each wave the moment it lands, so every market is tracked, and so is every
 // selection inside it - a new runner added to an existing market is a drop too.
 //
+// STATUS (2026-11-09): FanDuel answers a plain headless Chrome with a
+// press-and-hold "are you human" check, so this source does not work today and
+// FanDuel is off by default. It is kept so it can be switched on if that
+// changes, or fed from fanduel.boardFile.
+//
 // Source: a plain headless Chrome, the way Pick6 is read. It opens the UFC page,
 // then each fight and each of its tabs, and keeps the market JSON those pages
 // fetch for their own display (event-page / content-managed-page). It does NOT
@@ -387,7 +392,7 @@ export function tabsFromJson(json) {
 
 // What a refusal looks like. Matched so the error says "blocked" instead of
 // an unhelpful "no fights", never so it can be worked around.
-const BLOCKED = /access denied|unusual (traffic|activity)|are you a robot|verify you are human|captcha|not available in your (location|area)|request blocked/i;
+const BLOCKED = /access denied|access to this page has been denied|press (&|and) hold|confirm you are a human|unusual (traffic|activity)|are you a robot|verify you are human|captcha|not available in your (location|area)|request blocked/i;
 
 async function readLive(boardUrl) {
   if (!findBrowser()) throw new Error('FanDuel needs a local Chrome/Edge install');
@@ -400,7 +405,7 @@ async function readLive(boardUrl) {
       await page.settle();
 
       if (!fights.length && !page.responses.length && BLOCKED.test(`${listed.title} ${listed.text}`)) {
-        throw new Error('FanDuel refused the automated browser (blocked page) - use fanduel.boardFile instead');
+        throw new Error('FanDuel blocked the automated browser (press-and-hold bot check) - use fanduel.boardFile or turn books.fanduel off');
       }
 
       for (const fight of fights) {

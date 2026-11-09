@@ -227,6 +227,11 @@ Set `alertOnUnknownStat: false` once fantasy has dropped and you've seen it work
 
 ### FanDuel Sportsbook: every market, as it drops
 
+> **Off by default.** FanDuel currently answers the headless browser with a
+> press-and-hold "are you human" check, so the live source is blocked. The adapter
+> and alerting are kept for if that changes, or for a `fanduel.boardFile` you supply.
+> Turn it on with `books.fanduel: true`.
+
 FanDuel posts a fight's markets in waves - moneyline, method, distance and rounds
 first, then specials ("Under Time / Gone in 60 Seconds") and stat props (knockdowns,
 takedowns, significant strikes) closer to the card. So nothing is filtered here:
