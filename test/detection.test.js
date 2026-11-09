@@ -304,6 +304,39 @@ test('discord payload carries fighters and lines but never pings', () => {
   assert.match(payload.embeds[0].description, /Jalin Turner/);
 });
 
+test('dk sportsbook alerts show the over and under prices beside the line', () => {
+  const dk = (o) => ({
+    book: 'dksportsbook', kind: 'tracked', event: null, statKey: 'significant_strikes',
+    statLabel: 'Significant Strikes O/U', ...o,
+  });
+  const payload = buildDiscordPayload(
+    {
+      kind: 'tracked',
+      bookMeta: { name: 'DraftKings Sportsbook', color: 0, boardUrl: 'https://x' },
+      props: [
+        dk({ fighter: 'Davey Grant', value: 35.5, overOdds: '-115', underOdds: '-105' }),
+        dk({ fighter: 'Elijah Smith', value: 43.5, overOdds: '+100' }),
+        dk({ fighter: 'No Prices', value: 20.5 }),
+      ],
+    },
+    {}
+  );
+  const d = payload.embeds[0].description;
+  assert.match(d, /Davey Grant\*\* — Significant Strikes O\/U `35\.5` · O -115 \/ U -105/);
+  assert.match(d, /Elijah Smith.*`43\.5` · O \+100$/m, 'one side alone still shows');
+  assert.match(d, /No Prices.*`20\.5`$/m, 'no prices, no trailing separator');
+
+  const moved = buildDiscordPayload(
+    {
+      kind: 'move',
+      bookMeta: { name: 'DraftKings Sportsbook', color: 0, boardUrl: 'https://x' },
+      props: [dk({ fighter: 'Davey Grant', value: 36.5, previousValue: 35.5, overOdds: '-110', underOdds: '-120' })],
+    },
+    {}
+  );
+  assert.match(moved.embeds[0].description, /`35\.5` → `36\.5`.* · O -110 \/ U -120/);
+});
+
 test('discord embed count stays within the API limit', () => {
   const props = Array.from({ length: 25 }, (_, i) =>
     fantasyProp({ event: `Card ${i}`, fighter: `Fighter ${i}` })

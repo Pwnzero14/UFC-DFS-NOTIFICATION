@@ -92,10 +92,19 @@ const SCRIPT = `(async () => {
     for (let i = 0; i < lines.length; i++) {
       const m = lines[i].match(HEADING);
       if (!m) continue;
-      const w = lines.slice(i + 1, i + 9).join(' | ');
+      // DK prints negative prices with a Unicode minus (U+2212) and even money
+      // as "EVEN"; fold both to plain ASCII so the price regex sees them.
+      // Stop the window at the next market heading so a market with a price
+      // missing can never borrow its neighbour's.
+      const win = [];
+      for (const l of lines.slice(i + 1, i + 9)) {
+        if (HEADING.test(l)) break;
+        win.push(l);
+      }
+      const w = win.join(' | ').replace(/[\\u2212\\u2013]/g, '-').replace(/\\bEVEN\\b/gi, '+100');
       const over = w.match(/Over\\s+([0-9]+(?:\\.[0-9]+)?)/i);
       if (!over) continue;
-      const odds = [...w.matchAll(/([+-]\\d{3,4})/g)].map(x => x[1]);
+      const odds = [...w.matchAll(/(?:^|[^\\d.])([+-]\\d{3,4})(?!\\d)/g)].map(x => x[1]);
       // "Total Significant Strikes" -> "Significant Strikes";
       // "Round 1 Significant Strikes" is kept verbatim so it stays a distinct
       // market from the full-fight line.
@@ -186,10 +195,8 @@ export async function fetchProps() {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const odds =
-      m.overOdds && m.underOdds
-        ? `O ${m.overOdds} / U ${m.underOdds}`
-        : m.overOdds || null;
+    const overOdds = m.overOdds || null;
+    const underOdds = m.underOdds || null;
 
     props.push({
       book: meta.key,
@@ -205,7 +212,9 @@ export async function fetchProps() {
       event: null,
       startsAt: null,
       url: meta.boardUrl,
-      odds,
+      // Prices ride along for display only; moves are still judged on the line.
+      overOdds,
+      underOdds,
     });
   }
 

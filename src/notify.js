@@ -22,6 +22,15 @@ const asOdds = (v) => {
   return Number.isFinite(n) ? (n > 0 ? `+${n}` : String(n)) : fmt(v);
 };
 
+/** " · O -115 / U -105" for a sportsbook O/U prop that carries its prices,
+ *  otherwise nothing. Either side alone still shows. */
+export function ouOdds(p) {
+  const o = p?.overOdds ? `O ${p.overOdds}` : '';
+  const u = p?.underOdds ? `U ${p.underOdds}` : '';
+  const both = [o, u].filter(Boolean).join(' / ');
+  return both ? ` · ${both}` : '';
+}
+
 const shown = (p, v) =>
   p?.unit === 'time' ? asClock(v) : p?.unit === 'odds' ? asOdds(v) : fmt(v);
 
@@ -123,8 +132,8 @@ export function buildDiscordPayload(alert, cfg) {
             }
             const who = `${mark}${p.fighter ? `**${p.fighter}**` : '*(market)*'}`;
             return p.previousValue != null && p.value != null
-              ? `${who} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit, p.swing)}`
-              : `${who} — \`${shown(p, p.value)}\``;
+              ? `${who} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit, p.swing)}${ouOdds(p)}`
+              : `${who} — \`${shown(p, p.value)}\`${ouOdds(p)}`;
           })
           .join('\n'),
         color: bookMeta.color,
@@ -165,9 +174,9 @@ export function buildDiscordPayload(alert, cfg) {
 
       const who = `${mark}${p.fighter ? `**${p.fighter}**` : '*(market opened)*'}`;
       if (p.previousValue != null && p.value != null) {
-        return `${who} — ${p.statLabel} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit, p.swing)}`;
+        return `${who} — ${p.statLabel} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit, p.swing)}${ouOdds(p)}`;
       }
-      return `${who} — ${p.statLabel} \`${shown(p, p.value)}\``;
+      return `${who} — ${p.statLabel} \`${shown(p, p.value)}\`${ouOdds(p)}`;
     });
 
     const when = fightTime(list[0]?.startsAt);
