@@ -14,17 +14,29 @@
 // reports that plainly and the heartbeat goes red, rather than trying to get
 // round it.
 //
-// fanduel.boardFile overrides the browser, reading captured FanDuel JSON from a
+// FanDuel answers headless Chrome with a press-and-hold bot check, so in
+// practice the board comes from the capture extension (extension/fanduel-capture):
+// it reads the odds your own FanDuel tabs loaded and posts them to the watcher,
+// which saves them to fanduel-board.json. When that file exists it is used.
+//
+// fanduel.boardFile overrides both, reading captured FanDuel JSON from a
 // file instead. The file may hold one raw response, an array of them, or
 // { responses: [ { url?, json } | raw, ... ], fights?: [url, ...] }.
 
 import { readFile, stat as statFile } from 'node:fs/promises';
 import { propKey } from '../state.js';
-import { loadConfig } from '../config.js';
+import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { loadConfig, ROOT } from '../config.js';
 import { browseSession, findBrowser } from '../browser.js';
 
 const BOARD_URL = 'https://sportsbook.fanduel.com/navigation/ufc';
 const BOARD_FILE_MAX_AGE_MS = 30 * 60_000;
+
+// Where the watcher's local receiver saves what the FanDuel capture extension
+// sends (see src/receiver.js). When this file exists it is used instead of the
+// headless browser, which FanDuel blocks.
+export const RECEIVED_BOARD = join(ROOT, 'fanduel-board.json');
 
 // Markets you are specifically waiting on. They alert like everything else; a
 // match just gets a star so it stands out in a busy channel. Overridable with
@@ -387,7 +399,7 @@ export function tabsFromJson(json) {
 
 // What a refusal looks like. Matched so the error says "blocked" instead of
 // an unhelpful "no fights", never so it can be worked around.
-const BLOCKED = /access denied|unusual (traffic|activity)|are you a robot|verify you are human|captcha|not available in your (location|area)|request blocked/i;
+const BLOCKED = /access denied|access to this page has been denied|press (&|and) hold|confirm you are a human|unusual (traffic|activity)|are you a robot|verify you are human|captcha|not available in your (location|area)|request blocked/i;
 
 async function readLive(boardUrl) {
   if (!findBrowser()) throw new Error('FanDuel needs a local Chrome/Edge install');
@@ -400,7 +412,7 @@ async function readLive(boardUrl) {
       await page.settle();
 
       if (!fights.length && !page.responses.length && BLOCKED.test(`${listed.title} ${listed.text}`)) {
-        throw new Error('FanDuel refused the automated browser (blocked page) - use fanduel.boardFile instead');
+        throw new Error('FanDuel blocked the automated browser (press-and-hold bot check) - use the FanDuel capture extension');
       }
 
       for (const fight of fights) {
@@ -452,7 +464,8 @@ async function readBoardFile(boardFile) {
 export async function fetchProps() {
   const cfg = await loadConfig().catch(() => ({}));
   const fd = cfg.fanduel || {};
-  const boardFile = String(fd.boardFile || '').trim();
+  const boardFile =
+    String(fd.boardFile || '').trim() || (existsSync(RECEIVED_BOARD) ? RECEIVED_BOARD : '');
 
   const { responses, fights } = boardFile
     ? await readBoardFile(boardFile)

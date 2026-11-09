@@ -5,6 +5,7 @@ config.json
 # Runtime state, recreated on first run
 state.json
 state.json.tmp
+fanduel-board.json
 watcher.lock
 watcher.log
 lidtest.marker

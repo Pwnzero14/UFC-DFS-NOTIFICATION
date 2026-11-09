@@ -39,6 +39,8 @@ const DEFAULTS = {
     alertOnOddsMove: true,
     oddsMoveMinPct: 10,
     oddsMarkets: [],
+    // Where the watcher listens for the FanDuel capture extension. 0 = off.
+    receiverPort: 47823,
   },
   quietHours: { enabled: false, startHour: 2, endHour: 8 },
   heartbeat: { enabled: true, everyHours: 12 },
