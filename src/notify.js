@@ -76,11 +76,14 @@ export function buildDiscordPayload(alert, cfg) {
       ? stats.join(' & ').toLowerCase()
       : '';
 
+  // A market the user named as one they are waiting on gets a star, in the
+  // title as well as on its line, so it stands out from a routine wave.
+  const star = props.some((p) => p.starred) ? '⭐ ' : '';
   const title = isDrop
-    ? `🚨 ${bookMeta.name} — UFC ${marketName} ARE UP`
+    ? `${star}🚨 ${bookMeta.name} — UFC ${marketName} ARE UP`
     : isMove
       ? `📈 ${bookMeta.name} — ${movedMarket ? `${movedMarket} ` : ''}line ${props.length === 1 ? 'move' : 'moves'}`
-      : `👀 ${bookMeta.name} — new UFC market: ${props[0]?.statLabel}`;
+      : `${star}👀 ${bookMeta.name} — new UFC market: ${props[0]?.statLabel}`;
 
   const groups = groupByEvent(props);
 
@@ -101,7 +104,12 @@ export function buildDiscordPayload(alert, cfg) {
         title: i === 0 ? `${props.length} lines` : `…continued`,
         description: slice
           .map((p) => {
-            const who = p.fighter ? `**${p.fighter}**` : '*(market)*';
+            const mark = p.starred ? '⭐ ' : '';
+            if (p.note && p.previousValue == null) {
+              const where = p.fighter ? `**${p.fighter}** — ` : '';
+              return `${mark}${where}**${p.statLabel}** — ${p.note}`;
+            }
+            const who = `${mark}${p.fighter ? `**${p.fighter}**` : '*(market)*'}`;
             return p.previousValue != null && p.value != null
               ? `${who} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit)}`
               : `${who} — \`${shown(p, p.value)}\``;
@@ -134,10 +142,13 @@ export function buildDiscordPayload(alert, cfg) {
   const embeds = [];
   for (const [event, list] of groups) {
     const lines = list.slice(0, 24).map((p) => {
-      // A market we can see is open but whose numbers the book won't serve.
-      if (p.note) return `**${p.statLabel}** — ${p.note}`;
+      const mark = p.starred ? '⭐ ' : '';
+      // A market described in words rather than one number: a Pick6 tab whose
+      // values the book won't serve, or a sportsbook market and its prices.
+      // A move still renders as a move, with both values.
+      if (p.note && p.previousValue == null) return `${mark}**${p.statLabel}** — ${p.note}`;
 
-      const who = p.fighter ? `**${p.fighter}**` : '*(market opened)*';
+      const who = `${mark}${p.fighter ? `**${p.fighter}**` : '*(market opened)*'}`;
       if (p.previousValue != null && p.value != null) {
         return `${who} — ${p.statLabel} \`${shown(p, p.previousValue)}\` → \`${shown(p, p.value)}\` ${moveDelta(p.previousValue, p.value, p.unit)}`;
       }

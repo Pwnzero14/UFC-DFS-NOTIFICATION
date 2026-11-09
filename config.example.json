@@ -7,7 +7,8 @@
       "prizepicks": "",
       "betr": "",
       "pick6": "",
-      "dksportsbook": ""
+      "dksportsbook": "",
+      "fanduel": ""
     }
   },
   "windowsToast": true,
@@ -21,7 +22,8 @@
     "prizepicks": true,
     "betr": true,
     "pick6": true,
-    "dksportsbook": true
+    "dksportsbook": true,
+    "fanduel": true
   },
   "quietHours": {
     "enabled": false,
@@ -38,10 +40,20 @@
     "round 1 significant strikes": 1,
     "takedowns": 0,
     "knockdowns": 0,
-    "control time": 30
+    "control time": 30,
+    "total rounds": 0
   },
   "betr": {
     "boardFile": "",
     "refreshToken": ""
+  },
+  "fanduel": {
+    "boardFile": "",
+    "highlight": [
+      "knockdown",
+      "takedown",
+      "sig(nificant)?\\.? ?strike",
+      "60 seconds|gone in|under time"
+    ]
   }
 }

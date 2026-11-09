@@ -7,7 +7,7 @@
 // moves". Splitting here is what lets buildDiscordPayload name a batch
 // honestly instead of guessing at it.
 
-import { ALERTING_KINDS } from './state.js';
+import { ALERTING_KINDS, propKey } from './state.js';
 import { marketKey } from './fantasy.js';
 
 /**
@@ -44,8 +44,15 @@ export function buildAlerts(adapter, result, cfg, firstRun) {
 
   if (firstRun && !cfg.alertOnFirstRun) return alerts;
 
+  // A selection inside a market (FanDuel reports both) is only news on its own
+  // when the market was already up. When the whole market is new, the market's
+  // own line already announces it, and listing its 30 selections beside it
+  // would bury the one line that matters.
+  const newKeys = new Set(result.newProps.map(propKey));
+  const announced = (p) => p.parentKey && newKeys.has(p.parentKey);
+
   if (cfg.alertOnFantasy) {
-    const opened = result.newProps.filter((p) => ALERTING_KINDS.has(p.kind));
+    const opened = result.newProps.filter((p) => ALERTING_KINDS.has(p.kind) && !announced(p));
     const [fantasy, tracked] = byFamily(opened);
     push('fantasy', fantasy);
     // Still a market opening, and still worth the mention - it just gets

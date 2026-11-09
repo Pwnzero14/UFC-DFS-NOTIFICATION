@@ -21,12 +21,17 @@ const DEFAULTS = {
   alertOnLineMove: true,
   lineMoveMinDelta: 0,
   alertOnFirstRun: false,
-  books: { underdog: true, prizepicks: true, betr: true, pick6: true },
+  // FanDuel stays off until fanduel.boardFile is set, so an upgrade does not
+  // start a book that has nothing to read and paint the heartbeat red.
+  books: { underdog: true, prizepicks: true, betr: true, pick6: true, fanduel: false },
   // Betr closed its GraphQL endpoint to anonymous callers on 2026-09-07: the
   // gateway answers 401 before any query runs, so there is no query shape or
   // header that gets in. Paste a bearer token here and the adapter sends it.
   // Read fresh every poll, so a token can be added without a restart.
   betr: { authToken: '' },
+  // FanDuel Sportsbook reads the market JSON your own browser fetched, written
+  // to this file. highlight: market names (regex) that get a star when they post.
+  fanduel: { boardFile: '', highlight: [] },
   quietHours: { enabled: false, startHour: 2, endHour: 8 },
   heartbeat: { enabled: true, everyHours: 12 },
 };
@@ -48,6 +53,7 @@ export async function loadConfig() {
     discord: { ...DEFAULTS.discord, ...(raw.discord || {}) },
     books: { ...DEFAULTS.books, ...(raw.books || {}) },
     betr: { ...DEFAULTS.betr, ...(raw.betr || {}) },
+    fanduel: { ...DEFAULTS.fanduel, ...(raw.fanduel || {}) },
     quietHours: { ...DEFAULTS.quietHours, ...(raw.quietHours || {}) },
     heartbeat: { ...DEFAULTS.heartbeat, ...(raw.heartbeat || {}) },
     _path: path,

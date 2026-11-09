@@ -143,7 +143,9 @@ harmlessly to a no-op with Discord still working.
 | `lineMoveMinDelta` | `0` | Ignore moves smaller than this. `0` = report every move |
 | `discord.mentionOnLineMove` | `true` | Whether line moves ping as well as post |
 | `alertOnFirstRun` | `false` | Alert on the initial baseline sweep |
-| `books.*` | `true` | Turn individual books off |
+| `books.*` | `true` | Turn individual books off (`fanduel` defaults off) |
+| `fanduel.boardFile` | `""` | Path to the captured FanDuel market JSON |
+| `fanduel.highlight` | see example | Market names (regex) that get a ⭐ |
 | `quietHours` | off | Suppress desktop toasts in a time window (Discord still posts) |
 | `heartbeat.enabled` | `true` | Post a periodic "still alive" status to Discord |
 | `heartbeat.everyHours` | `12` | How often that status posts |
@@ -221,6 +223,34 @@ Set `alertOnUnknownStat: false` once fantasy has dropped and you've seen it work
 | PrizePicks | `partner-api.prizepicks.com/projections?league_id=12` | none | 12 = UFC. Fantasy stat is `Fantasy Score` |
 | Betr | `api.fantasy.betr.app/graphql` | none | Two-stage: list UFC events, then projections per event |
 | Pick6 | `pick6.draftkings.com/?sport=UFC` | none | No JSON API; the SSR HTML is parsed |
+| FanDuel Sportsbook | `fanduel.boardFile` | none | Market JSON your own browser fetched, written to a file |
+
+### FanDuel Sportsbook: every market, as it drops
+
+FanDuel posts a fight's markets in waves - moneyline, method, distance and rounds
+first, then specials ("Under Time / Gone in 60 Seconds") and stat props (knockdowns,
+takedowns, significant strikes) closer to the card. So nothing is filtered here:
+**every market is tracked, and so is every selection inside it.**
+
+| What happens | Alert |
+|---|---|
+| A new market posts on any fight | 🚨 one line per market, with its prices |
+| A new selection is added to a market already up | 🚨 that selection alone |
+| A whole new fight posts | 🚨 its markets (selections are not listed separately) |
+| An O/U market's line moves (Total Rounds 2.5 → 1.5) | 📈 move |
+| Odds change | nothing - prices move constantly |
+
+Markets matching `fanduel.highlight` get a ⭐ in the title and on the line. The default
+list covers knockdowns, takedowns, significant strikes and the 60-second market; add
+your own as regex strings.
+
+**Source.** FanDuel is read from `fanduel.boardFile`, the same bridge Underdog and
+Betr use: the FanDuel page open in your own browser fetches its market JSON
+(`event-page` / `content-managed-page` responses), whatever captures those writes them
+to the file, and the watcher reads it. The file can hold one raw response, an array of
+them, or `{ "responses": [...], "fights": ["<fight url>", ...] }`. A file older than
+30 minutes is reported as stale rather than silently trusted. FanDuel is **off by
+default** until `books.fanduel` is `true` and `boardFile` is set.
 
 ### Things worth knowing
 
@@ -257,7 +287,7 @@ src/
   fantasy.js            fantasy matching + known-stat lists
   notify.js             console / Discord / Windows toast
   adapters/
-    underdog.js  prizepicks.js  betr.js  pick6.js
+    underdog.js  prizepicks.js  betr.js  pick6.js  dksportsbook.js  fanduel.js
   lock.js               single-instance PID lock
 test/detection.test.js  30 tests, no network
 start-hidden.vbs        launches the watcher with no console window
