@@ -23,7 +23,7 @@
     "betr": true,
     "pick6": true,
     "dksportsbook": true,
-    "fanduel": true
+    "fanduel": false
   },
   "quietHours": {
     "enabled": false,

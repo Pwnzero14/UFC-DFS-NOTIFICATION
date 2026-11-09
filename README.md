@@ -223,9 +223,14 @@ Set `alertOnUnknownStat: false` once fantasy has dropped and you've seen it work
 | PrizePicks | `partner-api.prizepicks.com/projections?league_id=12` | none | 12 = UFC. Fantasy stat is `Fantasy Score` |
 | Betr | `api.fantasy.betr.app/graphql` | none | Two-stage: list UFC events, then projections per event |
 | Pick6 | `pick6.draftkings.com/?sport=UFC` | none | No JSON API; the SSR HTML is parsed |
-| FanDuel Sportsbook | capture extension → `fanduel-board.json` | none | Your own open FanDuel tabs; headless Chrome is blocked |
+| FanDuel Sportsbook | `sportsbook.fanduel.com/navigation/ufc` | none | Headless Chrome walks every fight and tab, reads the page's market JSON |
 
 ### FanDuel Sportsbook: every market, as it drops
+
+> **Off by default.** FanDuel currently answers the headless browser with a
+> press-and-hold "are you human" check, so the live source is blocked. The adapter
+> and alerting are kept for if that changes, or for a `fanduel.boardFile` you supply.
+> Turn it on with `books.fanduel: true`.
 
 FanDuel posts a fight's markets in waves - moneyline, method, distance and rounds
 first, then specials ("Under Time / Gone in 60 Seconds") and stat props (knockdowns,
@@ -259,29 +264,17 @@ Markets matching `fanduel.highlight` get a ⭐ in the title and on the line. The
 list covers knockdowns, takedowns, significant strikes and the 60-second market; add
 your own as regex strings.
 
-**Source: the FanDuel capture extension.** FanDuel answers an automated browser with a
-press-and-hold "are you human" check, so the odds are read from your own Chrome
-instead. `extension/fanduel-capture` copies the odds JSON your open FanDuel tabs
-already loaded and posts it to the watcher on `127.0.0.1:47823`, which saves it to
-`fanduel-board.json`; the FanDuel adapter reads that file each poll.
+**Source.** A plain headless Chrome on this PC, the way Pick6 is read: it opens the
+UFC page, then every fight and every tab on it (Method of Victory, Round Props, Time
+Props, and any tab FanDuel adds later), and reads the market JSON those pages load. A
+full card takes a few minutes, so FanDuel is polled every 5 minutes. It needs Chrome or
+Edge installed and runs with just the watcher on.
 
-1. Chrome → `chrome://extensions` → turn on **Developer mode** → **Load unpacked** →
-   pick the `extension/fanduel-capture` folder.
-2. Open a FanDuel tab on each UFC fight you want watched, plus any props tab (Time
-   Props, Round Props) you want covered. Pass the press-and-hold check yourself if
-   FanDuel shows it.
-3. In the extension's popup, set how often open fight tabs reload (default 5 minutes,
-   1 is the minimum). It also shows when it last reached the watcher.
-
-Limits worth knowing: it only sees tabs you have open, it needs Chrome running (minimized
-is fine), and like the watcher it pauses while the laptop sleeps. If FanDuel shows its
-check again after a reload, that tab stops updating until you click through it. When
-nothing has arrived for 30 minutes the board is reported stale and FanDuel goes 🔴.
-
-Without `fanduel-board.json` the adapter falls back to a plain headless Chrome, which
-FanDuel currently blocks; that shows as a "blocked" error rather than silence.
-`fanduel.boardFile` overrides both with a file of your own, and
-`fanduel.receiverPort` (default 47823, `0` = off) moves or disables the receiver.
+Unlike the DraftKings adapter it does **not** disguise itself. If FanDuel refuses an
+automated browser, the log says so, the heartbeat marks FanDuel 🔴, and the other books
+carry on. The fallback is `fanduel.boardFile`: point it at captured FanDuel JSON (one
+raw response, an array of them, or `{ "responses": [...], "fights": [url, ...] }`) and
+the browser is skipped. A file older than 30 minutes is reported as stale.
 
 ### Things worth knowing
 
@@ -319,9 +312,7 @@ src/
   notify.js             console / Discord / Windows toast
   adapters/
     underdog.js  prizepicks.js  betr.js  pick6.js  dksportsbook.js  fanduel.js
-  receiver.js           127.0.0.1 receiver for the FanDuel capture extension
   lock.js               single-instance PID lock
-extension/fanduel-capture/  Chrome extension that feeds FanDuel odds to the watcher
 test/detection.test.js  30 tests, no network
 start-hidden.vbs        launches the watcher with no console window
 run.bat                 restart loop (revives node if it exits)

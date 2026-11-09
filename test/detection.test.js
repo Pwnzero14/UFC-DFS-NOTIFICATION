@@ -24,10 +24,6 @@ import {
   eventIdFromUrl,
   meta as fdMeta,
 } from '../src/adapters/fanduel.js';
-import { startReceiver } from '../src/receiver.js';
-import { readFile as fsReadFile, rm as fsRm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join as pathJoin } from 'node:path';
 
 let passed = 0;
 function test(name, fn) {
@@ -1594,29 +1590,6 @@ test('fanduel line moves alert even with the global line-move switch off', () =>
   const cfg = { alertOnLineMove: false, fanduel: { alertOnLineMove: true } };
   assert.equal(buildAlerts({ meta: fdMeta }, d1, cfg, false).filter((a) => a.kind === 'move').length, 1);
   assert.equal(buildAlerts({ meta: fdMeta }, d1, { alertOnLineMove: false }, false).length, 0);
-});
-
-await atest('the receiver saves what the extension posts, and refuses web pages', async () => {
-  const boardPath = pathJoin(tmpdir(), `fd-board-${process.pid}.json`);
-  const port = 40000 + Math.floor(Math.random() * 20000);
-  const server = startReceiver({ port, boardPath, log: () => {} });
-  await new Promise((r) => server.once('listening', r));
-  try {
-    const url = `http://127.0.0.1:${port}/fanduel`;
-    const body = JSON.stringify({ responses: [{ url: 'x', json: fdPage(fdBase()) }], fights: [FD_URL] });
-    const ok = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' } });
-    assert.equal(ok.status, 200);
-    const saved = fdNormalizeBoardFile(JSON.parse(await fsReadFile(boardPath, 'utf8')));
-    assert.equal(normalizeFanDuel(saved.responses, saved.fights).filter((p) => !p.parentKey).length, 3);
-
-    const page = await fetch(url, { method: 'POST', body, headers: { Origin: 'https://evil.example' } });
-    assert.equal(page.status, 403, 'a web page cannot write the board');
-    const junk = await fetch(url, { method: 'POST', body: '{"nope":1}' });
-    assert.equal(junk.status, 400);
-  } finally {
-    server.close();
-    await fsRm(boardPath, { force: true });
-  }
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);

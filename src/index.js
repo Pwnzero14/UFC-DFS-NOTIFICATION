@@ -19,7 +19,6 @@ import * as betr from './adapters/betr.js';
 import * as pick6 from './adapters/pick6.js';
 import * as dksportsbook from './adapters/dksportsbook.js';
 import * as fanduel from './adapters/fanduel.js';
-import { startReceiver } from './receiver.js';
 
 const ADAPTERS = [underdog, prizepicks, betr, pick6, dksportsbook, fanduel];
 const STATE_PATH = join(ROOT, 'state.json');
@@ -409,9 +408,6 @@ async function main() {
   console.log(`Interval : ${cfg.pollSeconds}s (per-book floors apply)`);
   console.log(`Discord  : ${cfg.discord?.webhookUrl ? 'configured' : 'NOT configured'}`);
   console.log(`Toast    : ${cfg.windowsToast ? 'on' : 'off'}`);
-  if (cfg.books.fanduel !== false) {
-    startReceiver({ port: Number(cfg.fanduel?.receiverPort ?? 47823), boardPath: fanduel.RECEIVED_BOARD });
-  }
   console.log('Ctrl+C to stop\n');
 
   let stopping = false;
