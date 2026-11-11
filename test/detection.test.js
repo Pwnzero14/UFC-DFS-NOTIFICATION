@@ -24,13 +24,6 @@ import {
   eventIdFromUrl,
   meta as fdMeta,
 } from '../src/adapters/fanduel.js';
-import {
-  normalizeBetMGM,
-  fixtureIdFromUrl as bmFixtureIdFromUrl,
-  fightName as bmFightName,
-  fightScript as bmFightScript,
-  meta as bmMeta,
-} from '../src/adapters/betmgm.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -1630,71 +1623,6 @@ test('fanduel line moves alert even with the global line-move switch off', () =>
   const cfg = { alertOnLineMove: false, fanduel: { alertOnLineMove: true } };
   assert.equal(buildAlerts({ meta: fdMeta }, d1, cfg, false).filter((a) => a.kind === 'move').length, 1);
   assert.equal(buildAlerts({ meta: fdMeta }, d1, { alertOnLineMove: false }, false).length, 0);
-});
-
-// ------------------------------------------------------------------ BetMGM
-
-const BM_URL = 'https://www.betmgm.com/en/sports/events/cyril-gane-fra-josh-hokit-usa-19955231';
-const bmPage = (markets, extra = {}) => ({
-  url: BM_URL,
-  title: 'Cyril Gane - Josh Hokit Odds | BetMGM',
-  competition: 'UFC 334',
-  markets,
-  ...extra,
-});
-const BM_ML = { name: 'Fight result: 2-way', note: 'Cyril Gane · 1.44 · Josh Hokit · 2.85' };
-const BM_PD = { name: 'Will there be a point deduction?', note: 'Yes · 7.00 · No · 1.08' };
-const BM_CFG = { alertOnFantasy: true, alertOnUnknownStat: true };
-
-test('betmgm reads the fixture id and fight name', () => {
-  assert.equal(bmFixtureIdFromUrl(BM_URL), '19955231');
-  assert.equal(bmFixtureIdFromUrl('https://ky.betmgm.com/en/sports/mma-45'), null);
-  assert.equal(bmFightName('Cyril Gane - Josh Hokit Odds | BetMGM', BM_URL), 'Cyril Gane vs Josh Hokit');
-  assert.equal(bmFightName('BetMGM', BM_URL), 'Cyril Gane Fra Josh Hokit Usa');
-});
-
-test('betmgm records the moneyline quietly', () => {
-  const props = normalizeBetMGM([bmPage([BM_ML])]);
-  assert.equal(props.length, 1);
-  assert.equal(props[0].kind, 'board');
-  assert.equal(props[0].event, 'Cyril Gane vs Josh Hokit');
-  assert.equal(props[0].url, BM_URL);
-});
-
-test('a betmgm point deduction prop pings once when it drops, starred', () => {
-  const st = { books: {} };
-  const d0 = store.diff(st, 'betmgm', normalizeBetMGM([bmPage([BM_ML])]));
-  store.commit(st, 'betmgm', d0.fresh);
-  assert.equal(buildAlerts({ meta: bmMeta }, d0, BM_CFG, false).length, 0, 'a moneyline alone must not ping');
-
-  const d1 = store.diff(st, 'betmgm', normalizeBetMGM([bmPage([BM_ML, BM_PD])]));
-  const alerts = buildAlerts({ meta: bmMeta }, d1, BM_CFG, false);
-  assert.equal(alerts.length, 1);
-  assert.equal(alerts[0].kind, 'tracked');
-  assert.ok(alerts[0].props[0].starred);
-  const payload = buildDiscordPayload(alerts[0], {});
-  assert.match(payload.content, /⭐ 🚨 BetMGM/);
-  assert.match(payload.embeds[0].description, /point deduction\?\*\* — Yes · 7\.00/);
-  store.commit(st, 'betmgm', d1.fresh);
-
-  // Prices moving on it afterwards stay quiet.
-  const d2 = store.diff(st, 'betmgm', normalizeBetMGM([bmPage([BM_ML, { ...BM_PD, note: 'Yes · 5.50 · No · 1.12' }])]));
-  assert.equal(buildAlerts({ meta: bmMeta }, d2, { ...BM_CFG, alertOnLineMove: true }, false).length, 0);
-});
-
-test('betmgm keeps only UFC fights unless told otherwise', () => {
-  const pfl = bmPage([BM_PD], { competition: 'PFL World Tournament' });
-  assert.equal(normalizeBetMGM([pfl]).length, 0);
-  assert.equal(normalizeBetMGM([pfl], { competitions: [] }).length, 1);
-  assert.equal(normalizeBetMGM([bmPage([BM_PD], { competition: null })]).length, 1);
-});
-
-test('betmgm watch list is configurable and the fight script embeds it', () => {
-  const custom = normalizeBetMGM([bmPage([BM_ML])], { watch: ['fight result'] });
-  assert.equal(custom[0].kind, 'tracked');
-  const src = bmFightScript(['point\\s*deduct']);
-  assert.ok(src.includes('point\\\\s*deduct'));
-  assert.doesNotThrow(() => new Function(`return ${src}`));
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);

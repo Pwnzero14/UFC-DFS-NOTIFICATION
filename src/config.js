@@ -23,7 +23,7 @@ const DEFAULTS = {
   alertOnFirstRun: false,
   // FanDuel answers headless Chrome with a press-and-hold bot check, so it is
   // off unless switched on - otherwise it would just error every poll.
-  books: { underdog: true, prizepicks: true, betr: true, pick6: true, fanduel: false, betmgm: true },
+  books: { underdog: true, prizepicks: true, betr: true, pick6: true, fanduel: false },
   // Betr closed its GraphQL endpoint to anonymous callers on 2026-09-07: the
   // gateway answers 401 before any query runs, so there is no query shape or
   // header that gets in. Paste a bearer token here and the adapter sends it.
@@ -41,14 +41,6 @@ const DEFAULTS = {
     alertOnOddsMove: true,
     oddsMoveMinPct: 10,
     oddsMarkets: [],
-  },
-  // BetMGM (Kentucky) is read by a plain headless Chrome. watch: market names
-  // (regex) that ping when they post on any UFC fight. competitions: which
-  // events on the MMA page count (regex against the competition name).
-  betmgm: {
-    boardUrl: '',
-    watch: ['point\\s*deduct'],
-    competitions: ['ufc'],
   },
   quietHours: { enabled: false, startHour: 2, endHour: 8 },
   heartbeat: { enabled: true, everyHours: 12 },
@@ -72,7 +64,6 @@ export async function loadConfig() {
     books: { ...DEFAULTS.books, ...(raw.books || {}) },
     betr: { ...DEFAULTS.betr, ...(raw.betr || {}) },
     fanduel: { ...DEFAULTS.fanduel, ...(raw.fanduel || {}) },
-    betmgm: { ...DEFAULTS.betmgm, ...(raw.betmgm || {}) },
     quietHours: { ...DEFAULTS.quietHours, ...(raw.quietHours || {}) },
     heartbeat: { ...DEFAULTS.heartbeat, ...(raw.heartbeat || {}) },
     _path: path,

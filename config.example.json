@@ -8,8 +8,7 @@
       "betr": "",
       "pick6": "",
       "dksportsbook": "",
-      "fanduel": "",
-      "betmgm": ""
+      "fanduel": ""
     }
   },
   "windowsToast": true,
@@ -24,8 +23,7 @@
     "betr": true,
     "pick6": true,
     "dksportsbook": true,
-    "fanduel": false,
-    "betmgm": true
+    "fanduel": false
   },
   "quietHours": {
     "enabled": false,
@@ -64,14 +62,6 @@
       "^moneyline$",
       "^fight (winner|result)$",
       "^to win"
-    ]
-  },
-  "betmgm": {
-    "watch": [
-      "point\\s*deduct"
-    ],
-    "competitions": [
-      "ufc"
     ]
   }
 }
