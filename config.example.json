@@ -47,6 +47,10 @@
     "boardFile": "",
     "refreshToken": ""
   },
+  "dksportsbook": {
+    "alertOnOddsChange": true,
+    "oddsChangeMinPct": 0
+  },
   "fanduel": {
     "boardFile": "",
     "highlight": [

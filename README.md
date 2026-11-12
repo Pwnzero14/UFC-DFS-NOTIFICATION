@@ -144,6 +144,8 @@ harmlessly to a no-op with Discord still working.
 | `discord.mentionOnLineMove` | `true` | Whether line moves ping as well as post |
 | `alertOnFirstRun` | `false` | Alert on the initial baseline sweep |
 | `books.*` | `true` | Turn individual books off |
+| `dksportsbook.alertOnOddsChange` | `true` | Ping when a DraftKings Sportsbook O/U price moves on the same line (`O +120 → +110`) |
+| `dksportsbook.oddsChangeMinPct` | `0` | Implied-probability points either side must move first. `0` = every change |
 | `fanduel.boardFile` | `""` | Read captured FanDuel JSON from this file instead of the browser |
 | `fanduel.highlight` | see example | Market names (regex) that get a ⭐ |
 | `quietHours` | off | Suppress desktop toasts in a time window (Discord still posts) |

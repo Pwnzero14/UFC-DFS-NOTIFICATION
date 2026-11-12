@@ -7,7 +7,7 @@
 // moves". Splitting here is what lets buildDiscordPayload name a batch
 // honestly instead of guessing at it.
 
-import { ALERTING_KINDS, propKey } from './state.js';
+import { ALERTING_KINDS, propKey, priceAnchor } from './state.js';
 import { marketKey } from './fantasy.js';
 
 /**
@@ -79,6 +79,20 @@ export function oddsMoveIsMajor(from, to, cfg = {}) {
   return null;
 }
 
+/** Largest implied-probability move across the over and under, in points. */
+export function priceSwingPct(p) {
+  let best = 0;
+  for (const [from, to] of [
+    [p.previousOverOdds, p.overOdds],
+    [p.previousUnderOdds, p.underOdds],
+  ]) {
+    const a = impliedProb(from);
+    const b = impliedProb(to);
+    if (a != null && b != null) best = Math.max(best, Math.abs(b - a) * 100);
+  }
+  return best;
+}
+
 /** Fantasy first, then everything else we watch. Never mixed. */
 function byFamily(props) {
   return [
@@ -139,6 +153,24 @@ export function buildAlerts(adapter, result, cfg, firstRun) {
       if (entry) entry.anchor = p.value;
     }
     push('odds', swings);
+  }
+
+  // Over/under prices moving on a line that stayed put (DK Takedowns Landed
+  // Over 1.5 going +120 -> +110). Every price change reports by default;
+  // <book>.oddsChangeMinPct sets how many points of implied probability either
+  // side must move first, if that turns out too chatty.
+  if (bookCfg.alertOnOddsChange !== false && result.repriced?.length) {
+    const minPct = Number(bookCfg.oddsChangeMinPct ?? 0);
+    const changed = [];
+    for (const p of result.repriced) {
+      if (priceSwingPct(p) < minPct) continue;
+      changed.push(p);
+      // Reported: these prices become the new anchor. A failed send rewinds
+      // the entry, so the change is re-detected and re-sent next poll.
+      const entry = result.fresh?.[propKey(p)];
+      if (entry) entry.odds = priceAnchor(p);
+    }
+    push('price', changed);
   }
   return alerts;
 }

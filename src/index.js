@@ -64,6 +64,8 @@ async function dispatch(alert, cfg) {
     const headline =
       alert.kind === 'fantasy'
         ? `${alert.bookMeta.name}: UFC FANTASY PROPS UP`
+        : alert.kind === 'price'
+          ? `${alert.bookMeta.name}: odds change`
         : alert.kind === 'odds'
           ? `${alert.bookMeta.name}: big moneyline move`
           : alert.kind === 'move'
@@ -71,7 +73,9 @@ async function dispatch(alert, cfg) {
             : `${alert.bookMeta.name}: new UFC market`;
     const body = alert.props
       .slice(0, 3)
-      .map((p) => `${p.fighter || 'market'} ${p.statLabel} ${p.value ?? ''}`.trim())
+      .map((p) =>
+        `${p.fighter || 'market'} ${p.statLabel} ${p.value ?? ''}${alert.kind === 'price' ? notify.ouOdds(p) : ''}`.trim()
+      )
       .join(' - ');
     const res = await notify.sendWindowsToast(headline, body || 'Open the app');
     if (res.error) console.log(`   [toast failed] ${res.error}`);
