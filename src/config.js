@@ -42,6 +42,10 @@ const DEFAULTS = {
     oddsMoveMinPct: 10,
     oddsMarkets: [],
   },
+  // DraftKings Sportsbook O/U props: ping when the over/under prices move on
+  // a line that stayed the same. oddsChangeMinPct is the implied-probability
+  // move (in points) either side needs first; 0 reports every change.
+  dksportsbook: { alertOnOddsChange: true, oddsChangeMinPct: 0 },
   quietHours: { enabled: false, startHour: 2, endHour: 8 },
   heartbeat: { enabled: true, everyHours: 12 },
 };
@@ -64,6 +68,7 @@ export async function loadConfig() {
     books: { ...DEFAULTS.books, ...(raw.books || {}) },
     betr: { ...DEFAULTS.betr, ...(raw.betr || {}) },
     fanduel: { ...DEFAULTS.fanduel, ...(raw.fanduel || {}) },
+    dksportsbook: { ...DEFAULTS.dksportsbook, ...(raw.dksportsbook || {}) },
     quietHours: { ...DEFAULTS.quietHours, ...(raw.quietHours || {}) },
     heartbeat: { ...DEFAULTS.heartbeat, ...(raw.heartbeat || {}) },
     _path: path,

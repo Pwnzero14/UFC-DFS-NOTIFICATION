@@ -1625,4 +1625,91 @@ test('fanduel line moves alert even with the global line-move switch off', () =>
   assert.equal(buildAlerts({ meta: fdMeta }, d1, { alertOnLineMove: false }, false).length, 0);
 });
 
+
+console.log('\ndk sportsbook odds changes');
+
+const DK_META = { key: 'dksportsbook', name: 'DraftKings Sportsbook', color: 0, boardUrl: 'https://x' };
+const dkTd = (o) => ({
+  book: 'dksportsbook', kind: 'tracked', event: null, fighter: 'Josh Hokit',
+  statKey: 'takedowns_landed', statLabel: 'Takedowns Landed O/U', value: 1.5,
+  overOdds: '+120', underOdds: '-165', ...o,
+});
+const dkPoll = (st, props, cfg = {}) => {
+  const d = store.diff(st, 'dksportsbook', props);
+  const alerts = buildAlerts({ meta: DK_META }, d, { alertOnFantasy: true, ...cfg }, false);
+  store.commit(st, 'dksportsbook', d.fresh);
+  return alerts;
+};
+
+test('hokit over 1.5 going +120 -> +110 pings an odds change with old and new prices', () => {
+  const st = { books: {} };
+  dkPoll(st, [dkTd()]);
+  const alerts = dkPoll(st, [dkTd({ overOdds: '+110', underOdds: '-150' })]);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].kind, 'price');
+  const payload = buildDiscordPayload(alerts[0], {});
+  assert.match(payload.content, /DraftKings Sportsbook — takedowns landed o\/u odds change/);
+  assert.match(payload.embeds[0].description, /Josh Hokit\*\* — Takedowns Landed O\/U `1\.5` · O \+120 → \+110 \/ U -165 → -150/);
+});
+
+test('unchanged prices stay quiet, and a reported change does not repeat', () => {
+  const st = { books: {} };
+  dkPoll(st, [dkTd()]);
+  assert.equal(dkPoll(st, [dkTd()]).length, 0);
+  assert.equal(dkPoll(st, [dkTd({ overOdds: '+110' })]).length, 1);
+  assert.equal(dkPoll(st, [dkTd({ overOdds: '+110' })]).length, 0, 'the new price is the anchor now');
+});
+
+test('one side moving shows the arrow only on that side', () => {
+  const st = { books: {} };
+  dkPoll(st, [dkTd()]);
+  const [a] = dkPoll(st, [dkTd({ underOdds: '-175' })]);
+  assert.match(buildDiscordPayload(a, {}).embeds[0].description, /· O \+120 \/ U -165 → -175/);
+});
+
+test('a state file from before prices were tracked seeds silently', () => {
+  const st = { books: {} };
+  dkPoll(st, [dkTd({ overOdds: null, underOdds: null })]);
+  const key = store.propKey(dkTd());
+  delete st.books.dksportsbook.props[key].odds;
+  assert.equal(dkPoll(st, [dkTd({ overOdds: '+110' })]).length, 0);
+  assert.equal(dkPoll(st, [dkTd({ overOdds: '+105' })]).length, 1);
+});
+
+test('a line move is a line move, not an odds change', () => {
+  const st = { books: {} };
+  dkPoll(st, [dkTd()]);
+  const alerts = dkPoll(st, [dkTd({ value: 2.5, overOdds: '+200', underOdds: '-260' })], { alertOnLineMove: true });
+  assert.deepEqual(alerts.map((a) => a.kind), ['move']);
+  // Prices on the new line start a fresh anchor.
+  assert.equal(dkPoll(st, [dkTd({ value: 2.5, overOdds: '+200', underOdds: '-260' })]).length, 0);
+  assert.equal(dkPoll(st, [dkTd({ value: 2.5, overOdds: '+180', underOdds: '-240' })])[0].kind, 'price');
+});
+
+test('odds changes can be switched off or held to a minimum swing that drift still reaches', () => {
+  const st = { books: {} };
+  dkPoll(st, [dkTd()]);
+  assert.equal(dkPoll(st, [dkTd({ overOdds: '+110' })], { dksportsbook: { alertOnOddsChange: false } }).length, 0);
+  const st2 = { books: {} };
+  const cfg = { dksportsbook: { oddsChangeMinPct: 3 } };
+  dkPoll(st2, [dkTd({ underOdds: null })], cfg);
+  // +120 -> +110 is about 2.1 points: under the bar.
+  assert.equal(dkPoll(st2, [dkTd({ overOdds: '+110', underOdds: null })], cfg).length, 0);
+  // Measured from +120, not from +110, so the drift to +105 (3.3 pts) reports.
+  const [a] = dkPoll(st2, [dkTd({ overOdds: '+105', underOdds: null })], cfg);
+  assert.match(buildDiscordPayload(a, {}).embeds[0].description, /O \+120 → \+105/);
+});
+
+test('a failed send rewinds the odds anchor so the change is re-sent', () => {
+  const st = { books: {} };
+  dkPoll(st, [dkTd()]);
+  const prior = structuredClone(st.books.dksportsbook.props);
+  const d = store.diff(st, 'dksportsbook', [dkTd({ overOdds: '+110' })]);
+  buildAlerts({ meta: DK_META }, d, {}, false);
+  const k = store.propKey(dkTd());
+  d.fresh[k] = prior[k]; // what pollOne does when Discord fails
+  store.commit(st, 'dksportsbook', d.fresh);
+  assert.equal(dkPoll(st, [dkTd({ overOdds: '+110' })]).length, 1);
+});
+
 console.log(`\n${passed} passed${process.exitCode ? ', SOME FAILED' : ''}\n`);

@@ -84,11 +84,37 @@ export function diff(state, book, props) {
   const fresh = {};
   const newProps = [];
   const moved = [];
+  const repriced = [];
 
   for (const prop of props) {
     const key = propKey(prop);
     const prior = seen[key];
     fresh[key] = { value: prop.value, kind: prop.kind, statLabel: prop.statLabel };
+
+    // Sportsbook O/U props carry their over/under prices. Those are remembered
+    // as an anchor - the prices last reported, and the line they were quoted
+    // on - so a price move on an unchanged line (Over 1.5 +120 -> +110) is
+    // news even though the line itself never moved. Like the moneyline
+    // anchor below, it only advances when a change is reported, so a slow
+    // drift adds up instead of hiding inside a series of small ticks.
+    if (hasPrices(prop)) {
+      const a = prior?.odds;
+      if (a && a.line === prop.value) {
+        fresh[key].odds = a;
+        if (pricesDiffer(a, prop) && ALERTING_KINDS.has(prop.kind)) {
+          repriced.push({
+            ...prop,
+            previousOverOdds: a.over ?? null,
+            previousUnderOdds: a.under ?? null,
+          });
+        }
+      } else {
+        // First sighting, a state file from before prices were tracked, or a
+        // new line: a price on 2.5 says nothing about a price on 1.5, so the
+        // anchor starts over silently. The line move speaks for itself.
+        fresh[key].odds = priceAnchor(prop);
+      }
+    }
 
     if (!prior) {
       newProps.push(prop);
@@ -113,7 +139,21 @@ export function diff(state, book, props) {
   }
 
   const removed = Object.keys(seen).filter((k) => !(k in fresh)).length;
-  return { newProps, moved, fresh, removed };
+  return { newProps, moved, repriced, fresh, removed };
+}
+
+const hasPrices = (p) => p.overOdds != null || p.underOdds != null;
+
+/** The prices worth remembering for a prop, tied to the line they were on. */
+export function priceAnchor(p) {
+  return { line: p.value, over: p.overOdds ?? null, under: p.underOdds ?? null };
+}
+
+/** "+110" and "110" are the same price; a side that vanished is not a move. */
+const sameOdds = (a, b) => a == null || b == null || Number(a) === Number(b);
+
+function pricesDiffer(anchor, p) {
+  return !sameOdds(anchor.over, p.overOdds) || !sameOdds(anchor.under, p.underOdds);
 }
 
 // How many consecutive polls a prop may be absent before we forget it.

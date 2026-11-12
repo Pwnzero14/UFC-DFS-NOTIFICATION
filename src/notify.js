@@ -25,8 +25,11 @@ const asOdds = (v) => {
 /** " · O -115 / U -105" for a sportsbook O/U prop that carries its prices,
  *  otherwise nothing. Either side alone still shows. */
 export function ouOdds(p) {
-  const o = p?.overOdds ? `O ${p.overOdds}` : '';
-  const u = p?.underOdds ? `U ${p.underOdds}` : '';
+  // An odds-change alert carries the prices it moved from: "O +120 → +110".
+  const side = (now, was) =>
+    was != null && now != null && Number(was) !== Number(now) ? `${was} → ${now}` : now;
+  const o = p?.overOdds ? `O ${side(p.overOdds, p.previousOverOdds)}` : '';
+  const u = p?.underOdds ? `U ${side(p.underOdds, p.previousUnderOdds)}` : '';
   const both = [o, u].filter(Boolean).join(' / ');
   return both ? ` · ${both}` : '';
 }
@@ -74,6 +77,7 @@ export function buildDiscordPayload(alert, cfg) {
   const isDrop = kind === 'fantasy' || kind === 'tracked';
   const isMove = kind === 'move';
   const isOdds = kind === 'odds';
+  const isPrice = kind === 'price';
 
   // Name the actual market: "FANTASY PROPS" is wrong for a sportsbook O/U, and
   // wrong for a takedown line. Alerts arrive split by market family, so these
@@ -98,7 +102,9 @@ export function buildDiscordPayload(alert, cfg) {
   // A market the user named as one they are waiting on gets a star, in the
   // title as well as on its line, so it stands out from a routine wave.
   const star = props.some((p) => p.starred) ? '⭐ ' : '';
-  const title = isOdds
+  const title = isPrice
+    ? `💵 ${bookMeta.name} — ${movedMarket ? `${movedMarket} ` : ''}odds ${props.length === 1 ? 'change' : 'changes'}`
+    : isOdds
     ? `💰 ${bookMeta.name} — big moneyline ${props.length === 1 ? 'move' : 'moves'}`
     : isDrop
     ? `${star}🚨 ${bookMeta.name} — UFC ${marketName} ARE UP`
@@ -409,6 +415,7 @@ const TAGS = {
   tracked: '\x1b[45m\x1b[30m MARKET  \x1b[0m',
   move: '\x1b[46m\x1b[30m  MOVE   \x1b[0m',
   odds: '\x1b[44m\x1b[37m  ODDS   \x1b[0m',
+  price: '\x1b[44m\x1b[37m PRICES  \x1b[0m',
   unknown: '\x1b[43m\x1b[30m NEW STAT \x1b[0m',
 };
 
@@ -420,8 +427,9 @@ export function logAlert(alert) {
     const detail = moved
       ? `${fmt(p.previousValue)} -> ${fmt(p.value)}  (${Number(p.value) > Number(p.previousValue) ? '+' : ''}${(Number(p.value) - Number(p.previousValue)).toFixed(2)})`
       : fmt(p.value);
+    const prices = alert.kind === 'price' ? ouOdds(p) : '';
     console.log(
-      `   ${(p.fighter || '(market)').padEnd(24)} ${p.statLabel.padEnd(22)} ${detail}`
+      `   ${(p.fighter || '(market)').padEnd(24)} ${p.statLabel.padEnd(22)} ${detail}${prices}`
     );
   }
   if (alert.props.length > 15) console.log(`   …and ${alert.props.length - 15} more`);
